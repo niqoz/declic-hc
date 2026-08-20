@@ -328,8 +328,18 @@ export default function Home() {
       <a className={`mobile-summary ${verdictPositive ? "gain" : "loss"}`} href="#result"><span>{verdictPositive ? "Économie HP/HC" : "Écart HP/HC"}<small>{results.share.toFixed(0)} % en HC</small></span><strong>{euros.format(Math.abs(results.delta))}<small>/an</small></strong><b>↑</b></a>
 
       <section className="timeline-section">
-        <div className="timeline-copy"><p className="eyebrow">COMPRENDRE EN UN COUP D’ŒIL</p><h2>Une journée électrique en Corse</h2><p>Les créneaux dépendent du compteur. La réforme engagée vise à déplacer progressivement une partie des heures creuses vers la journée solaire.</p></div>
-        <div className="timeline-card"><div className="timeline-hours"><span>00h</span><span>06h</span><span>12h</span><span>18h</span><span>24h</span></div><div className="timeline-track"><span className="night-one" /><span className="daytime" /><span className="night-two" /></div><div className="timeline-labels"><span>☾ HC nocturnes</span><span>☀ HC diurnes visées<br /><small>au moins 3 heures</small></span><span>HP du soir</span></div><p className="timeline-note"><strong>Attention :</strong> 12 h–15 h illustre la plage méridienne visée, pas un horaire garanti. Seul le créneau communiqué par EDF pour votre compteur fait foi.</p></div>
+        <div className="timeline-copy"><p className="eyebrow">COMPRENDRE EN UN COUP D’ŒIL</p><h2>Les heures creuses en Corse</h2><p>EDF Corse indique quatre créneaux nocturnes possibles de 8 heures consécutives. La plage attribuée dépend de votre compteur.</p></div>
+        <div className="timeline-card">
+          <div className="timeline-hours"><span>00h</span><span>06h</span><span>12h</span><span>18h</span><span>24h</span></div>
+          <div className="hc-windows" aria-label="Les quatre plages d’heures creuses possibles en Corse">
+            <div className="hc-window"><strong>21 h 40–5 h 40</strong><div className="hc-bar"><i style={{ width: "23.61%" }} /><i style={{ left: "90.28%", width: "9.72%" }} /></div></div>
+            <div className="hc-window"><strong>22 h 10–6 h 10</strong><div className="hc-bar"><i style={{ width: "25.69%" }} /><i style={{ left: "92.36%", width: "7.64%" }} /></div></div>
+            <div className="hc-window"><strong>22 h 45–6 h 45</strong><div className="hc-bar"><i style={{ width: "28.13%" }} /><i style={{ left: "94.79%", width: "5.21%" }} /></div></div>
+            <div className="hc-window"><strong>23 h 45–7 h 45</strong><div className="hc-bar"><i style={{ width: "32.29%" }} /><i style={{ left: "98.96%", width: "1.04%" }} /></div></div>
+          </div>
+          <div className="hc-legend"><span><i /> Heures creuses</span><span><i /> Heures pleines</span></div>
+          <p className="timeline-note"><strong>Votre horaire exact</strong> figure sur votre facture ou dans l’application EDF DOM & Corse. Source : <a href="https://corse.edf.fr/sites/sei_corse/files/2026-08/bleu_residentiel_corse.pdf" target="_blank" rel="noreferrer">grille EDF Corse au 1er août 2026</a>.</p>
+        </div>
       </section>
       <footer><span>Déclic HC · outil indépendant de sensibilisation</span><span>Données enregistrées uniquement sur cet appareil</span></footer>
     </main>
