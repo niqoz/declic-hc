@@ -93,6 +93,7 @@ export default function Home() {
   const [installHelp, setInstallHelp] = useState(false);
   const [isInstalled, setIsInstalled] = useState(false);
   const [offPeakWindows, setOffPeakWindows] = useState<OffPeakWindow[]>(DEFAULT_HC_WINDOWS);
+  const [activeOffPeakWindowId, setActiveOffPeakWindowId] = useState(DEFAULT_HC_WINDOWS[0].id);
   const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false);
 
   useEffect(() => {
@@ -111,6 +112,7 @@ export default function Home() {
             .map((window: OffPeakWindow, index: number) => ({ ...window, id: Number.isFinite(window.id) ? window.id : index + 1 }));
           if (savedWindows.length) setOffPeakWindows(savedWindows);
         }
+        if (Number.isFinite(state.activeOffPeakWindowId)) setActiveOffPeakWindowId(state.activeOffPeakWindowId);
         if (state.consumptionMode === "fixed" || state.consumptionMode === "proportional") {
           setConsumptionMode(state.consumptionMode);
           if (Number.isFinite(state.recipeReferenceKwh) && state.recipeReferenceKwh > 0) setRecipeReferenceKwh(state.recipeReferenceKwh);
@@ -145,10 +147,15 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("hphc-simulator-state", JSON.stringify({ tariffs, power, annualKwh, backgroundHcShare, appliances, consumptionMode, recipeReferenceKwh, offPeakWindows }));
-  }, [tariffs, power, annualKwh, backgroundHcShare, appliances, consumptionMode, recipeReferenceKwh, offPeakWindows]);
+    localStorage.setItem("hphc-simulator-state", JSON.stringify({ tariffs, power, annualKwh, backgroundHcShare, appliances, consumptionMode, recipeReferenceKwh, offPeakWindows, activeOffPeakWindowId }));
+  }, [tariffs, power, annualKwh, backgroundHcShare, appliances, consumptionMode, recipeReferenceKwh, offPeakWindows, activeOffPeakWindowId]);
+
+  useEffect(() => {
+    if (!offPeakWindows.some((window) => window.id === activeOffPeakWindowId)) setActiveOffPeakWindowId(offPeakWindows[0].id);
+  }, [activeOffPeakWindowId, offPeakWindows]);
 
   const activeTariff = tariffs.find((tariff) => tariff.power === power) ?? tariffs[0];
+  const activeOffPeakWindow = offPeakWindows.find((window) => window.id === activeOffPeakWindowId) ?? offPeakWindows[0];
   const effectiveAppliances = useMemo(() => {
     const scale = consumptionMode === "proportional" && recipeReferenceKwh > 0 ? annualKwh / recipeReferenceKwh : 1;
     return appliances.map((appliance) => ({ ...appliance, kwh: appliance.kwh * scale }));
@@ -339,7 +346,7 @@ export default function Home() {
               <button className="remove" aria-label={`Retirer ${appliance.name}`} onClick={() => setAppliances((current) => current.filter((item) => item.id !== appliance.id))}>×</button>
               <input className="appliance-name" aria-label="Nom de l’usage" value={appliance.name} onChange={(e) => updateAppliance(appliance.id, { name: e.target.value })} />
               <div className="appliance-energy"><input aria-label={`Consommation annuelle de ${appliance.name}`} type="number" min="0" step="10" value={Math.round(effectiveAppliances[index].kwh)} onChange={(e) => updateApplianceKwh(appliance.id, Number(e.target.value))} /><span>kWh/an</span></div>
-              <button className={`schedule ${appliance.inOffPeak ? "scheduled" : ""}`} onClick={() => updateAppliance(appliance.id, { inOffPeak: !appliance.inOffPeak })}><span className="schedule-icon">{appliance.inOffPeak ? "☾" : "☀"}</span><span><small>{appliance.inOffPeak ? "PROGRAMMÉ EN" : "CONSOMMÉ EN"}</small>{appliance.inOffPeak ? "Heures creuses" : "Heures pleines"}</span><i /></button>
+              <button className={`schedule ${appliance.inOffPeak ? "scheduled" : ""}`} onClick={() => updateAppliance(appliance.id, { inOffPeak: !appliance.inOffPeak })}><span className="schedule-icon">{appliance.inOffPeak ? "☾" : "☀"}</span><span><small>{appliance.inOffPeak ? "PROGRAMMÉ EN HC" : "CONSOMMÉ EN"}</small>{appliance.inOffPeak ? `${formatTime(activeOffPeakWindow.start)}–${formatTime(activeOffPeakWindow.end)}` : "Heures pleines"}</span><i /></button>
             </article>)}</div>
             <details className="preset-library">
               <summary>＋ Ajouter un consommateur préenregistré</summary>
@@ -362,7 +369,7 @@ export default function Home() {
           <h2>{verdictPositive ? "Les heures creuses prennent l’avantage" : verdictNeutral ? "Les deux options sont presque à égalité" : "Le tarif Base reste devant"}</h2>
           <div className={`saving ${verdictPositive ? "positive" : "negative"}`}><span>{verdictPositive ? "ÉCONOMIE ESTIMÉE" : verdictNeutral ? "ÉCART ESTIMÉ" : "SURCOÛT HP/HC ESTIMÉ"}</span><strong>{euros.format(Math.abs(results.delta))}<small>/ an</small></strong><p>soit {preciseEuros.format(Math.abs(results.delta) / 12)} par mois</p></div>
           <div className="cost-lines"><div><span>Option Base</span><strong>{euros.format(results.baseCost)}</strong></div><div className="highlight"><span>Option HP / HC</span><strong>{euros.format(results.hphcCost)}</strong></div></div>
-          <div className="distribution"><div className="distribution-title"><span>Répartition HP / HC</span><strong>{results.share.toFixed(0)} % en HC</strong></div><div className="bar"><span style={{ width: `${results.share}%` }} /></div><div className="bar-legend"><span>☀ HP · {number.format(results.hpKwh)} kWh</span><span>☾ HC · {number.format(results.hcKwh)} kWh</span></div></div>
+          <div className="distribution"><div className="distribution-title"><span>Répartition HP / HC<small>Plage compteur : {formatTime(activeOffPeakWindow.start)}–{formatTime(activeOffPeakWindow.end)}</small></span><strong>{results.share.toFixed(0)} % en HC</strong></div><div className="bar"><span style={{ width: `${results.share}%` }} /></div><div className="bar-legend"><span>☀ HP · {number.format(results.hpKwh)} kWh</span><span>☾ HC · {number.format(results.hcKwh)} kWh</span></div></div>
           <div className="threshold"><span className="threshold-icon">◎</span><p><strong>Votre point d’équilibre</strong><br />HP/HC devient intéressant à partir d’environ <b>{results.threshold.toFixed(0)} %</b> de consommation en heures creuses.</p></div>
           <p className="disclaimer">Estimation TTC, hors évolutions futures et services annexes. Comparez-la à une facture réelle avant toute décision contractuelle.</p>
         </aside>
@@ -371,7 +378,7 @@ export default function Home() {
       <a className={`mobile-summary ${verdictPositive ? "gain" : "loss"}`} href="#result"><span>{verdictPositive ? "Économie HP/HC" : "Écart HP/HC"}<small>{results.share.toFixed(0)} % en HC</small></span><strong>{euros.format(Math.abs(results.delta))}<small>/an</small></strong><b>↑</b></a>
 
       <section className="timeline-section">
-        <div className="timeline-copy"><p className="eyebrow">COMPRENDRE EN UN COUP D’ŒIL</p><h2>Les heures creuses en Corse</h2><p>EDF Corse indique quatre créneaux nocturnes possibles de 8 heures consécutives. La plage attribuée dépend de votre compteur.</p></div>
+        <div className="timeline-copy"><p className="eyebrow">COMPRENDRE EN UN COUP D’ŒIL</p><h2>Les heures creuses en Corse</h2><p>Choisissez la plage indiquée sur votre facture. Elle sera appliquée à tous les appareils que vous programmez en heures creuses.</p></div>
         <div className="timeline-card">
           <div className="timeline-card-heading"><span>PLAGES HORAIRES {schedulesCustomized && <b>PERSONNALISÉES</b>}</span><button type="button" onClick={() => setScheduleEditorOpen((open) => !open)}>{scheduleEditorOpen ? "✓ Terminer" : "✎ Modifier"}</button></div>
           {scheduleEditorOpen && <div className="hc-editor">
@@ -383,15 +390,15 @@ export default function Home() {
               <small className={offPeakDuration(window) === 480 ? "valid" : ""}>{formatDuration(offPeakDuration(window))}</small>
               <button className="remove-window" type="button" aria-label={`Supprimer la plage ${index + 1}`} disabled={offPeakWindows.length === 1} onClick={() => setOffPeakWindows((current) => current.filter((item) => item.id !== window.id))}>×</button>
             </div>)}
-            <div className="hc-editor-actions"><button type="button" disabled={offPeakWindows.length >= 8} onClick={addOffPeakWindow}>＋ Ajouter une plage</button><button type="button" onClick={() => setOffPeakWindows(DEFAULT_HC_WINDOWS)}>↺ Horaires EDF</button></div>
+            <div className="hc-editor-actions"><button type="button" disabled={offPeakWindows.length >= 8} onClick={addOffPeakWindow}>＋ Ajouter une plage</button><button type="button" onClick={() => { setOffPeakWindows(DEFAULT_HC_WINDOWS); setActiveOffPeakWindowId(DEFAULT_HC_WINDOWS[0].id); }}>↺ Horaires EDF</button></div>
             <p>Une plage officielle dure 8 h. Les modifications mettent immédiatement à jour le graphique et restent enregistrées sur cet appareil.</p>
           </div>}
           <div className="timeline-hours"><span>00h</span><span>06h</span><span>12h</span><span>18h</span><span>24h</span></div>
           <div className="hc-windows" aria-label="Plages d’heures creuses affichées">
-            {offPeakWindows.map((window) => <div className="hc-window" key={window.id}><strong>{formatTime(window.start)}–{formatTime(window.end)}</strong><div className="hc-bar">{offPeakSegments(window).map((segment, index) => <i key={index} style={{ left: `${segment.left}%`, width: `${segment.width}%` }} />)}</div></div>)}
+            {offPeakWindows.map((window) => <div className={`hc-window ${window.id === activeOffPeakWindow.id ? "active" : ""}`} key={window.id}><button className="window-choice" type="button" aria-pressed={window.id === activeOffPeakWindow.id} onClick={() => setActiveOffPeakWindowId(window.id)}><span aria-hidden="true" /><strong>{formatTime(window.start)}–{formatTime(window.end)}</strong><small>{window.id === activeOffPeakWindow.id ? "Utilisée" : "Choisir"}</small></button><div className="hc-bar">{offPeakSegments(window).map((segment, index) => <i key={index} style={{ left: `${segment.left}%`, width: `${segment.width}%` }} />)}</div></div>)}
           </div>
           <div className="hc-legend"><span><i /> Heures creuses</span><span><i /> Heures pleines</span></div>
-          <p className="timeline-note"><strong>Votre horaire exact</strong> figure sur votre facture ou dans l’application EDF DOM & Corse. Horaires proposés par défaut : <a href="https://corse.edf.fr/sites/sei_corse/files/2026-08/bleu_residentiel_corse.pdf" target="_blank" rel="noreferrer">grille EDF Corse au 1er août 2026</a>.</p>
+          <p className="timeline-note"><strong>Plage utilisée dans la simulation : {formatTime(activeOffPeakWindow.start)}–{formatTime(activeOffPeakWindow.end)}.</strong> Son horaire ne change pas le prix du kWh HC ; il indique quand les appareils marqués « programmés en HC » sont supposés fonctionner. Horaires proposés par défaut : <a href="https://corse.edf.fr/sites/sei_corse/files/2026-08/bleu_residentiel_corse.pdf" target="_blank" rel="noreferrer">grille EDF Corse au 1er août 2026</a>.</p>
         </div>
       </section>
       <footer><span>Déclic HC · outil indépendant de sensibilisation</span><span>Données enregistrées uniquement sur cet appareil</span></footer>
