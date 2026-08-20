@@ -12,6 +12,7 @@ type Tariff = {
 };
 
 type Appliance = { id: number; name: string; kwh: number; inOffPeak: boolean };
+type ConsumptionMode = "proportional" | "fixed";
 
 const DEFAULT_TARIFFS: Tariff[] = [
   { power: 3, baseSubscription: 133.59, hphcSubscription: 133.59, basePrice: 0.1834, hpPrice: 0.1964, hcPrice: 0.1457 },
@@ -42,6 +43,8 @@ export default function Home() {
   const [annualKwh, setAnnualKwh] = useState(4500);
   const [backgroundHcShare, setBackgroundHcShare] = useState(25);
   const [appliances, setAppliances] = useState<Appliance[]>(DEFAULT_APPLIANCES);
+  const [consumptionMode, setConsumptionMode] = useState<ConsumptionMode>("proportional");
+  const [recipeReferenceKwh, setRecipeReferenceKwh] = useState(4500);
   const [tariffsOpen, setTariffsOpen] = useState(false);
   const [notice, setNotice] = useState("");
 
@@ -55,23 +58,34 @@ export default function Home() {
         if (Number.isFinite(state.annualKwh)) setAnnualKwh(state.annualKwh);
         if (Number.isFinite(state.backgroundHcShare)) setBackgroundHcShare(state.backgroundHcShare);
         if (Array.isArray(state.appliances)) setAppliances(state.appliances);
+        if (state.consumptionMode === "fixed" || state.consumptionMode === "proportional") {
+          setConsumptionMode(state.consumptionMode);
+          if (Number.isFinite(state.recipeReferenceKwh) && state.recipeReferenceKwh > 0) setRecipeReferenceKwh(state.recipeReferenceKwh);
+        } else if (Number.isFinite(state.annualKwh) && state.annualKwh > 0) {
+          setRecipeReferenceKwh(state.annualKwh);
+        }
       }
     } catch { /* Les valeurs par défaut restent actives. */ }
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("hphc-simulator-state", JSON.stringify({ tariffs, power, annualKwh, backgroundHcShare, appliances }));
-  }, [tariffs, power, annualKwh, backgroundHcShare, appliances]);
+    localStorage.setItem("hphc-simulator-state", JSON.stringify({ tariffs, power, annualKwh, backgroundHcShare, appliances, consumptionMode, recipeReferenceKwh }));
+  }, [tariffs, power, annualKwh, backgroundHcShare, appliances, consumptionMode, recipeReferenceKwh]);
 
   const activeTariff = tariffs.find((tariff) => tariff.power === power) ?? tariffs[0];
+  const effectiveAppliances = useMemo(() => {
+    const scale = consumptionMode === "proportional" && recipeReferenceKwh > 0 ? annualKwh / recipeReferenceKwh : 1;
+    return appliances.map((appliance) => ({ ...appliance, kwh: appliance.kwh * scale }));
+  }, [annualKwh, appliances, consumptionMode, recipeReferenceKwh]);
+
   const results = useMemo(() => {
-    const declaredFlexible = appliances.reduce((sum, appliance) => sum + Math.max(0, appliance.kwh), 0);
+    const declaredFlexible = effectiveAppliances.reduce((sum, appliance) => sum + Math.max(0, appliance.kwh), 0);
     const flexibleKwh = Math.min(annualKwh, declaredFlexible);
     const ratio = declaredFlexible > annualKwh && declaredFlexible > 0 ? annualKwh / declaredFlexible : 1;
     const backgroundKwh = Math.max(0, annualKwh - flexibleKwh);
     const backgroundHc = backgroundKwh * backgroundHcShare / 100;
-    const scheduledHc = appliances.filter((a) => a.inOffPeak).reduce((sum, a) => sum + a.kwh * ratio, 0);
+    const scheduledHc = effectiveAppliances.filter((a) => a.inOffPeak).reduce((sum, a) => sum + a.kwh * ratio, 0);
     const hcKwh = Math.min(annualKwh, backgroundHc + scheduledHc);
     const hpKwh = annualKwh - hcKwh;
     const baseCost = activeTariff.baseSubscription + annualKwh * activeTariff.basePrice;
@@ -83,7 +97,7 @@ export default function Home() {
       ? clamp(((activeTariff.hpPrice - activeTariff.basePrice) * annualKwh + activeTariff.hphcSubscription - activeTariff.baseSubscription) / (denominator * Math.max(1, annualKwh)) * 100, 0, 100)
       : 100;
     return { flexibleKwh, hcKwh, hpKwh, baseCost, hphcCost, delta, share, threshold };
-  }, [activeTariff, annualKwh, appliances, backgroundHcShare]);
+  }, [activeTariff, annualKwh, effectiveAppliances, backgroundHcShare]);
 
   function updateTariff(field: keyof Omit<Tariff, "power">, value: number) {
     setTariffs((current) => current.map((tariff) => tariff.power === power ? { ...tariff, [field]: Math.max(0, value) } : tariff));
@@ -91,6 +105,28 @@ export default function Home() {
 
   function updateAppliance(id: number, patch: Partial<Appliance>) {
     setAppliances((current) => current.map((appliance) => appliance.id === id ? { ...appliance, ...patch } : appliance));
+  }
+
+  function updateApplianceKwh(id: number, displayedKwh: number) {
+    const storedKwh = consumptionMode === "proportional" && annualKwh > 0
+      ? displayedKwh * recipeReferenceKwh / annualKwh
+      : displayedKwh;
+    updateAppliance(id, { kwh: Math.max(0, storedKwh) });
+  }
+
+  function changeConsumptionMode(nextMode: ConsumptionMode) {
+    if (nextMode === consumptionMode) return;
+    if (nextMode === "fixed") {
+      setAppliances(effectiveAppliances);
+    } else {
+      setRecipeReferenceKwh(Math.max(annualKwh, 1));
+    }
+    setConsumptionMode(nextMode);
+  }
+
+  function addAppliance() {
+    const storedKwh = consumptionMode === "proportional" && annualKwh > 0 ? 150 * recipeReferenceKwh / annualKwh : 150;
+    setAppliances((current) => [...current, { id: Date.now(), name: "Nouvel usage", kwh: storedKwh, inOffPeak: true }]);
   }
 
   function exportGrid() {
@@ -161,19 +197,30 @@ export default function Home() {
               <label>Consommation annuelle<div className="input-wrap"><input type="number" min="0" step="100" value={annualKwh} onChange={(e) => setAnnualKwh(Math.max(0, Number(e.target.value)))} /><span>kWh/an</span></div></label>
               <label>Puissance du compteur<select value={power} onChange={(e) => setPower(Number(e.target.value))}>{tariffs.map((tariff) => <option key={tariff.power} value={tariff.power}>{tariff.power} kVA</option>)}</select></label>
             </div>
+            <fieldset className="mode-selector">
+              <legend>Comment faire évoluer les appareils ?</legend>
+              <button type="button" className={consumptionMode === "proportional" ? "active" : ""} onClick={() => changeConsumptionMode("proportional")}>
+                <span>Profil proportionnel <b>Recommandé</b></span>
+                <small>La même recette : tous les usages suivent la consommation annuelle.</small>
+              </button>
+              <button type="button" className={consumptionMode === "fixed" ? "active" : ""} onClick={() => changeConsumptionMode("fixed")}>
+                <span>Appareils fixes</span>
+                <small>Leurs kWh restent identiques, même si le total du foyer change.</small>
+              </button>
+            </fieldset>
             <label className="range-label"><span>Part naturelle des autres usages en heures creuses <strong>{backgroundHcShare} %</strong></span><input type="range" min="0" max="60" value={backgroundHcShare} onChange={(e) => setBackgroundHcShare(Number(e.target.value))} /></label>
             <p className="hint">Éclairage, froid, cuisson… hors appareils listés ci-dessous.</p>
           </section>
 
           <section className="panel appliance-panel">
             <div className="step-heading"><span>02</span><div><p>USAGES FLEXIBLES</p><h2>À vous de les décaler</h2></div></div>
-            <div className="appliance-list">{appliances.map((appliance) => <article className="appliance" key={appliance.id}>
+            <div className="appliance-list">{appliances.map((appliance, index) => <article className="appliance" key={appliance.id}>
               <button className="remove" aria-label={`Retirer ${appliance.name}`} onClick={() => setAppliances((current) => current.filter((item) => item.id !== appliance.id))}>×</button>
               <input className="appliance-name" aria-label="Nom de l’usage" value={appliance.name} onChange={(e) => updateAppliance(appliance.id, { name: e.target.value })} />
-              <div className="appliance-energy"><input aria-label={`Consommation annuelle de ${appliance.name}`} type="number" min="0" step="10" value={appliance.kwh} onChange={(e) => updateAppliance(appliance.id, { kwh: Math.max(0, Number(e.target.value)) })} /><span>kWh/an</span></div>
+              <div className="appliance-energy"><input aria-label={`Consommation annuelle de ${appliance.name}`} type="number" min="0" step="10" value={Math.round(effectiveAppliances[index].kwh)} onChange={(e) => updateApplianceKwh(appliance.id, Number(e.target.value))} /><span>kWh/an</span></div>
               <button className={`schedule ${appliance.inOffPeak ? "scheduled" : ""}`} onClick={() => updateAppliance(appliance.id, { inOffPeak: !appliance.inOffPeak })}><span className="schedule-icon">{appliance.inOffPeak ? "☾" : "☀"}</span><span><small>{appliance.inOffPeak ? "PROGRAMMÉ EN" : "CONSOMMÉ EN"}</small>{appliance.inOffPeak ? "Heures creuses" : "Heures pleines"}</span><i /></button>
             </article>)}</div>
-            <button className="add-button" onClick={() => setAppliances((current) => [...current, { id: Date.now(), name: "Nouvel usage", kwh: 150, inOffPeak: true }])}>＋ Ajouter un usage flexible</button>
+            <button className="add-button" onClick={addAppliance}>＋ Ajouter un usage flexible</button>
             {results.flexibleKwh >= annualKwh && annualKwh > 0 && <p className="warning">La somme des usages flexibles atteint la consommation totale du foyer.</p>}
           </section>
         </div>
