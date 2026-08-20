@@ -1,4 +1,4 @@
-const CACHE = "declic-hc-v3";
+const CACHE = "declic-hc-v4";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/favicon.svg"];
 
 self.addEventListener("install", (event) => {

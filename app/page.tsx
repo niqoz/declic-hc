@@ -13,6 +13,7 @@ type Tariff = {
 
 type Appliance = { id: number; name: string; kwh: number; inOffPeak: boolean };
 type ConsumptionMode = "proportional" | "fixed";
+type AppliancePreset = { name: string; kwh: number; icon: string; detail: string };
 
 const DEFAULT_TARIFFS: Tariff[] = [
   { power: 3, baseSubscription: 133.59, hphcSubscription: 133.59, basePrice: 0.1834, hpPrice: 0.1964, hcPrice: 0.1457 },
@@ -30,6 +31,17 @@ const DEFAULT_APPLIANCES: Appliance[] = [
   { id: 1, name: "Chauffe-eau", kwh: 1200, inOffPeak: true },
   { id: 2, name: "Lave-linge", kwh: 160, inOffPeak: false },
   { id: 3, name: "Lave-vaisselle", kwh: 220, inOffPeak: false },
+];
+
+const APPLIANCE_PRESETS: AppliancePreset[] = [
+  { name: "Chauffe-eau", kwh: 1200, icon: "♨", detail: "Ballon électrique" },
+  { name: "Véhicule électrique", kwh: 2000, icon: "⚡", detail: "Recharge à domicile" },
+  { name: "Pompe de piscine", kwh: 900, icon: "≈", detail: "Filtration programmable" },
+  { name: "Ballon thermodynamique", kwh: 500, icon: "◌", detail: "Eau chaude optimisée" },
+  { name: "Lave-linge", kwh: 160, icon: "◉", detail: "Cycles différés" },
+  { name: "Lave-vaisselle", kwh: 220, icon: "◇", detail: "Cycles différés" },
+  { name: "Sèche-linge", kwh: 300, icon: "◎", detail: "Cycles programmables" },
+  { name: "Climatisation pilotée", kwh: 600, icon: "❄", detail: "Préclimatisation" },
 ];
 
 const euros = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
@@ -126,9 +138,18 @@ export default function Home() {
     setConsumptionMode(nextMode);
   }
 
-  function addAppliance() {
-    const storedKwh = consumptionMode === "proportional" && annualKwh > 0 ? 150 * recipeReferenceKwh / annualKwh : 150;
-    setAppliances((current) => [...current, { id: Date.now(), name: "Nouvel usage", kwh: storedKwh, inOffPeak: true }]);
+  function storedKwhFromDisplayed(displayedKwh: number) {
+    return consumptionMode === "proportional" && annualKwh > 0 ? displayedKwh * recipeReferenceKwh / annualKwh : displayedKwh;
+  }
+
+  function addAppliance(preset?: AppliancePreset) {
+    const model = preset ?? { name: "Nouvel usage", kwh: 150 };
+    setAppliances((current) => [...current, {
+      id: Date.now() + Math.random(),
+      name: model.name,
+      kwh: storedKwhFromDisplayed(model.kwh),
+      inOffPeak: true,
+    }]);
   }
 
   function setTotalHcShare(totalShare: number) {
@@ -230,7 +251,18 @@ export default function Home() {
               <div className="appliance-energy"><input aria-label={`Consommation annuelle de ${appliance.name}`} type="number" min="0" step="10" value={Math.round(effectiveAppliances[index].kwh)} onChange={(e) => updateApplianceKwh(appliance.id, Number(e.target.value))} /><span>kWh/an</span></div>
               <button className={`schedule ${appliance.inOffPeak ? "scheduled" : ""}`} onClick={() => updateAppliance(appliance.id, { inOffPeak: !appliance.inOffPeak })}><span className="schedule-icon">{appliance.inOffPeak ? "☾" : "☀"}</span><span><small>{appliance.inOffPeak ? "PROGRAMMÉ EN" : "CONSOMMÉ EN"}</small>{appliance.inOffPeak ? "Heures creuses" : "Heures pleines"}</span><i /></button>
             </article>)}</div>
-            <button className="add-button" onClick={addAppliance}>＋ Ajouter un usage flexible</button>
+            <details className="preset-library">
+              <summary>＋ Ajouter un consommateur préenregistré</summary>
+              <div className="preset-heading"><strong>Modèles opportunistes</strong><span>Estimations indicatives, modifiables après ajout</span></div>
+              <div className="preset-grid">
+                {APPLIANCE_PRESETS.map((preset) => <button type="button" key={preset.name} onClick={() => addAppliance(preset)}>
+                  <span className="preset-icon">{preset.icon}</span>
+                  <span><strong>{preset.name}</strong><small>{preset.detail} · {number.format(preset.kwh)} kWh/an</small></span>
+                  <b>＋</b>
+                </button>)}
+              </div>
+              <button type="button" className="custom-preset" onClick={() => addAppliance()}>＋ Créer un usage personnalisé</button>
+            </details>
             {results.flexibleKwh >= annualKwh && annualKwh > 0 && <p className="warning">La somme des usages flexibles atteint la consommation totale du foyer.</p>}
           </section>
         </div>
