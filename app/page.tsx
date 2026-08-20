@@ -232,6 +232,7 @@ export default function Home() {
 
   const verdictPositive = results.delta > 1;
   const verdictNeutral = Math.abs(results.delta) <= 1;
+  const annualSliderMax = Math.max(20000, Math.ceil(annualKwh / 5000) * 5000);
 
   return (
     <main>
@@ -268,6 +269,11 @@ export default function Home() {
               <label>Consommation annuelle<div className="input-wrap"><input type="number" min="0" step="100" value={annualKwh} onChange={(e) => setAnnualKwh(Math.max(0, Number(e.target.value)))} /><span>kWh/an</span></div></label>
               <label>Puissance du compteur<select value={power} onChange={(e) => setPower(Number(e.target.value))}>{tariffs.map((tariff) => <option key={tariff.power} value={tariff.power}>{tariff.power} kVA</option>)}</select></label>
             </div>
+            <label className="annual-slider">
+              <span>Ajuster la consommation <strong>{number.format(annualKwh)} kWh/an</strong></span>
+              <input aria-label="Consommation annuelle en kilowattheures" type="range" min="0" max={annualSliderMax} step="100" value={annualKwh} onInput={(e) => setAnnualKwh(Number(e.currentTarget.value))} />
+              <small><span>0 kWh</span><span>{number.format(annualSliderMax)} kWh</span></small>
+            </label>
             <fieldset className="mode-selector">
               <legend>Comment faire évoluer les appareils ?</legend>
               <button type="button" className={consumptionMode === "proportional" ? "active" : ""} onClick={() => changeConsumptionMode("proportional")}>
