@@ -14,6 +14,10 @@ type Tariff = {
 type Appliance = { id: number; name: string; kwh: number; inOffPeak: boolean };
 type ConsumptionMode = "proportional" | "fixed";
 type AppliancePreset = { name: string; kwh: number; icon: string; detail: string };
+type InstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+};
 
 const DEFAULT_TARIFFS: Tariff[] = [
   { power: 3, baseSubscription: 133.59, hphcSubscription: 133.59, basePrice: 0.1834, hpPrice: 0.1964, hcPrice: 0.1457 },
@@ -59,6 +63,9 @@ export default function Home() {
   const [recipeReferenceKwh, setRecipeReferenceKwh] = useState(4500);
   const [tariffsOpen, setTariffsOpen] = useState(false);
   const [notice, setNotice] = useState("");
+  const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
+  const [installHelp, setInstallHelp] = useState(false);
+  const [isInstalled, setIsInstalled] = useState(false);
 
   useEffect(() => {
     try {
@@ -79,6 +86,25 @@ export default function Home() {
       }
     } catch { /* Les valeurs par défaut restent actives. */ }
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    setIsInstalled(window.matchMedia("(display-mode: standalone)").matches);
+    const capturePrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as InstallPromptEvent);
+    };
+    const confirmInstall = () => {
+      setIsInstalled(true);
+      setInstallPrompt(null);
+      setInstallHelp(false);
+    };
+    window.addEventListener("beforeinstallprompt", capturePrompt);
+    window.addEventListener("appinstalled", confirmInstall);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", capturePrompt);
+      window.removeEventListener("appinstalled", confirmInstall);
+    };
   }, []);
 
   useEffect(() => {
@@ -159,6 +185,17 @@ export default function Home() {
     setBackgroundHcShare(clamp(backgroundShare, 0, 100));
   }
 
+  async function installApp() {
+    if (!installPrompt) {
+      setInstallHelp(true);
+      return;
+    }
+    await installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    if (choice.outcome === "accepted") setIsInstalled(true);
+    setInstallPrompt(null);
+  }
+
   function exportGrid() {
     const blob = new Blob([JSON.stringify({ name: "Grille tarifaire", tariffs }, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -197,8 +234,9 @@ export default function Home() {
     <main>
       <header className="topbar">
         <a className="brand" href="#top" aria-label="Déclic HC, accueil"><span className="brand-mark">⌁</span><span>Déclic <strong>HC</strong></span></a>
-        <div className="top-actions"><span className="offline-badge"><i /> Fonctionne hors ligne</span><button className="button subtle" onClick={() => setTariffsOpen((open) => !open)}>⚙ Grille tarifaire</button></div>
+        <div className="top-actions"><span className="offline-badge"><i /> Fonctionne hors ligne</span><button className="button install-button" disabled={isInstalled} onClick={installApp}>{isInstalled ? "✓ Installée" : "⇩ Installer"}</button><button className="button subtle tariff-button" onClick={() => setTariffsOpen((open) => !open)}>⚙ Grille tarifaire</button></div>
       </header>
+      {installHelp && <div className="install-help" role="status"><span><strong>Installer Déclic HC</strong>Sur iPhone : Partager → Sur l’écran d’accueil. Sur Android : menu ⋮ → Installer l’application.</span><button aria-label="Fermer les instructions" onClick={() => setInstallHelp(false)}>×</button></div>}
 
       <section className="hero" id="top">
         <div><p className="eyebrow">SIMULATEUR PÉDAGOGIQUE · CORSE</p><h1>Et si vos appareils<br />travaillaient <em>au bon moment&nbsp;?</em></h1><p className="intro">Déplacez vos usages flexibles en heures creuses et voyez immédiatement l’effet sur votre facture annuelle.</p></div>
@@ -267,7 +305,7 @@ export default function Home() {
           </section>
         </div>
 
-        <aside className="result-card">
+        <aside className="result-card" id="result">
           <p className="step light">VOTRE SIMULATION · {power} KVA</p>
           <h2>{verdictPositive ? "Les heures creuses prennent l’avantage" : verdictNeutral ? "Les deux options sont presque à égalité" : "Le tarif Base reste devant"}</h2>
           <div className={`saving ${verdictPositive ? "positive" : "negative"}`}><span>{verdictPositive ? "ÉCONOMIE ESTIMÉE" : verdictNeutral ? "ÉCART ESTIMÉ" : "SURCOÛT HP/HC ESTIMÉ"}</span><strong>{euros.format(Math.abs(results.delta))}<small>/ an</small></strong><p>soit {preciseEuros.format(Math.abs(results.delta) / 12)} par mois</p></div>
@@ -277,6 +315,8 @@ export default function Home() {
           <p className="disclaimer">Estimation TTC, hors évolutions futures et services annexes. Comparez-la à une facture réelle avant toute décision contractuelle.</p>
         </aside>
       </section>
+
+      <a className={`mobile-summary ${verdictPositive ? "gain" : "loss"}`} href="#result"><span>{verdictPositive ? "Économie HP/HC" : "Écart HP/HC"}<small>{results.share.toFixed(0)} % en HC</small></span><strong>{euros.format(Math.abs(results.delta))}<small>/an</small></strong><b>↑</b></a>
 
       <section className="timeline-section">
         <div className="timeline-copy"><p className="eyebrow">COMPRENDRE EN UN COUP D’ŒIL</p><h2>Une journée électrique en Corse</h2><p>Les créneaux dépendent du compteur. La réforme engagée vise à déplacer progressivement une partie des heures creuses vers la journée solaire.</p></div>

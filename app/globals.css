@@ -16,7 +16,13 @@ main { min-height:100vh; overflow:hidden; }
 .offline-badge i { width:7px; height:7px; background:#5ba976; border-radius:50%; box-shadow:0 0 0 4px rgba(91,169,118,.14); }
 .button { border:0; border-radius:10px; padding:10px 15px; cursor:pointer; font-size:13px; font-weight:700; transition:.15s; }
 .button.subtle { background:rgba(255,255,255,.6); border:1px solid var(--line); }
+.install-button { background:var(--ink); color:white; border:1px solid var(--ink); }
+.install-button:disabled { opacity:.62; cursor:default; }
 .button:hover { transform:translateY(-1px); background:white; }
+.install-button:hover { background:#285a51; }
+.install-help { max-width:1184px; margin:12px auto 0; padding:12px 14px; display:flex; justify-content:space-between; align-items:center; gap:16px; border:1px solid #d6c37f; border-radius:11px; background:#fff3cb; color:#5e4a16; font-size:11px; line-height:1.45; }
+.install-help span { display:flex; gap:10px; align-items:center; }
+.install-help button { flex:0 0 auto; width:32px; height:32px; border:0; background:transparent; font-size:22px; cursor:pointer; }
 .hero { max-width:1184px; min-height:345px; margin:0 auto; padding:74px 0 56px; display:flex; justify-content:space-between; align-items:center; position:relative; }
 .eyebrow,.step { font:800 11px/1.2 var(--font-geist-mono),monospace; letter-spacing:1.8px; color:#4f776d; }
 .hero h1 { max-width:820px; margin:16px 0 19px; font-size:clamp(44px,5.4vw,76px); line-height:.98; letter-spacing:-4px; font-weight:620; }
@@ -129,6 +135,7 @@ input[type="range"]:disabled { opacity:.4; cursor:not-allowed; }
 .threshold strong { color:white; }
 .threshold b { color:#f0ca6e; }
 .disclaimer { margin:18px 0 0; color:#87a49e; font-size:9px; line-height:1.5; }
+.mobile-summary { display:none; }
 .timeline-section { padding:68px max(28px,calc((100vw - 1184px)/2)); background:#e6e1d5; display:grid; grid-template-columns:.7fr 1.3fr; gap:60px; align-items:center; }
 .timeline-copy h2 { margin:10px 0 12px; font:400 39px/1.05 Georgia,serif; }
 .timeline-copy>p:last-child { color:var(--ink-soft); font-size:14px; line-height:1.6; }
@@ -153,10 +160,16 @@ footer { max-width:1184px; margin:auto; padding:25px 0; display:flex; justify-co
   footer { margin-inline:22px; }
 }
 @media (max-width:600px) {
+  main { padding-bottom:calc(78px + env(safe-area-inset-bottom)); }
   .topbar { height:66px; padding-inline:18px; }
   .offline-badge { display:none; }
-  .topbar .button { padding:9px; font-size:0; }
-  .topbar .button::first-letter { font-size:16px; }
+  .top-actions { gap:7px; }
+  .topbar .button { min-height:42px; padding:9px 11px; font-size:11px; }
+  .tariff-button { width:42px; overflow:hidden; white-space:nowrap; font-size:0!important; }
+  .tariff-button::first-letter { font-size:17px; }
+  .install-help { margin:10px 12px 0; align-items:flex-start; }
+  .install-help span { display:block; }
+  .install-help strong { display:block; margin-bottom:3px; }
   .hero { min-height:290px; padding:54px 0 42px; }
   .hero h1 { font-size:44px; letter-spacing:-2.7px; }
   .intro { font-size:15px; }
@@ -169,6 +182,13 @@ footer { max-width:1184px; margin:auto; padding:25px 0; display:flex; justify-co
   .preset-grid { grid-template-columns:1fr; }
   .remove { display:block; }
   .result-card { padding:25px 22px; }
+  .mobile-summary { position:fixed; z-index:20; left:10px; right:10px; bottom:calc(10px + env(safe-area-inset-bottom)); min-height:58px; padding:9px 13px; display:grid; grid-template-columns:1fr auto 20px; gap:10px; align-items:center; border:1px solid rgba(255,255,255,.22); border-radius:15px; background:rgba(23,59,53,.96); color:white; text-decoration:none; box-shadow:0 10px 35px rgba(12,37,32,.3); backdrop-filter:blur(12px); }
+  .mobile-summary.loss { background:rgba(95,54,38,.96); }
+  .mobile-summary>span { font-size:11px; font-weight:800; }
+  .mobile-summary small { display:block; margin-top:2px; color:#bcd0ca; font-size:8px; font-weight:500; }
+  .mobile-summary strong { color:#f0ca6e; font-size:20px; }
+  .mobile-summary strong small { display:inline; margin-left:2px; color:inherit; }
+  .mobile-summary b { color:#9cc4b7; font-size:18px; }
   .section-heading { align-items:flex-start; }
   .file-actions { flex-wrap:wrap; justify-content:flex-end; }
   .timeline-section { padding-inline:22px; }

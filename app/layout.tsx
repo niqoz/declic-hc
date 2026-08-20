@@ -11,7 +11,8 @@ export const metadata: Metadata = {
   description: "Comparez le tarif Base et l’option Heures Pleines / Heures Creuses selon les usages de votre foyer.",
   applicationName: "Déclic HC",
   manifest: "/manifest.webmanifest",
-  icons: { icon: "/favicon.svg", apple: "/favicon.svg" },
+  icons: { icon: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }, { url: "/icon-512.png", sizes: "512x512", type: "image/png" }], apple: "/icon-192.png" },
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Déclic HC" },
   openGraph: {
     title: "Déclic HC — Vos appareils, au bon moment.",
     description: "Simulez l’impact du tarif Heures Pleines / Heures Creuses sur votre foyer.",
