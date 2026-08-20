@@ -6,11 +6,20 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://declic-hc-corse.niqo839499.chatgpt.site"),
   title: "Déclic HC — Simulateur heures creuses",
   description: "Comparez le tarif Base et l’option Heures Pleines / Heures Creuses selon les usages de votre foyer.",
   applicationName: "Déclic HC",
   manifest: "/manifest.webmanifest",
   icons: { icon: "/favicon.svg", apple: "/favicon.svg" },
+  openGraph: {
+    title: "Déclic HC — Vos appareils, au bon moment.",
+    description: "Simulez l’impact du tarif Heures Pleines / Heures Creuses sur votre foyer.",
+    images: [{ url: "/og.png", width: 1536, height: 1024, alt: "Déclic HC, simulateur heures creuses" }],
+    locale: "fr_FR",
+    type: "website",
+  },
+  twitter: { card: "summary_large_image", images: ["/og.png"] },
 };
 
 export const viewport: Viewport = { themeColor: "#173b35", width: "device-width", initialScale: 1 };
