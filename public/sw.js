@@ -1,5 +1,7 @@
-const CACHE = "declic-hc-v5";
-const APP_SHELL = ["/", "/manifest.webmanifest", "/favicon.svg", "/icon-192.png", "/icon-512.png"];
+const CACHE = "declic-hc-v6";
+const APP_SHELL = ["./", "./manifest.webmanifest", "./favicon.svg", "./icon-192.png", "./icon-512.png"]
+  .map((path) => new URL(path, self.registration.scope).pathname);
+const OFFLINE_PAGE = new URL("./", self.registration.scope).pathname;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)));
@@ -17,5 +19,5 @@ self.addEventListener("fetch", (event) => {
     const copy = response.clone();
     caches.open(CACHE).then((cache) => cache.put(event.request, copy));
     return response;
-  }).catch(() => caches.match(event.request).then((cached) => cached || caches.match("/"))));
+  }).catch(() => caches.match(event.request).then((cached) => cached || caches.match(OFFLINE_PAGE))));
 });

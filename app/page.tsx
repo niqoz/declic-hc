@@ -85,7 +85,10 @@ export default function Home() {
         }
       }
     } catch { /* Les valeurs par défaut restent actives. */ }
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    if ("serviceWorker" in navigator) {
+      const serviceWorkerUrl = new URL("sw.js", document.baseURI);
+      navigator.serviceWorker.register(serviceWorkerUrl.pathname).catch(() => undefined);
+    }
   }, []);
 
   useEffect(() => {
