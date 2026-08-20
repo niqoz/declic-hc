@@ -14,6 +14,7 @@ type Tariff = {
 type Appliance = { id: number; name: string; kwh: number; inOffPeak: boolean };
 type ConsumptionMode = "proportional" | "fixed";
 type AppliancePreset = { name: string; kwh: number; icon: string; detail: string };
+type OffPeakWindow = { id: number; start: string; end: string };
 type InstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
@@ -48,10 +49,35 @@ const APPLIANCE_PRESETS: AppliancePreset[] = [
   { name: "Climatisation pilotée", kwh: 600, icon: "❄", detail: "Préclimatisation" },
 ];
 
+const DEFAULT_HC_WINDOWS: OffPeakWindow[] = [
+  { id: 1, start: "21:40", end: "05:40" },
+  { id: 2, start: "22:10", end: "06:10" },
+  { id: 3, start: "22:45", end: "06:45" },
+  { id: 4, start: "23:45", end: "07:45" },
+];
+
 const euros = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
 const preciseEuros = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", minimumFractionDigits: 2 });
 const number = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 });
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
+const validTime = (value: unknown): value is string => typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+const timeToMinutes = (value: string) => {
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours * 60 + minutes;
+};
+const formatTime = (value: string) => {
+  const [hours, minutes] = value.split(":").map(Number);
+  return `${hours} h ${String(minutes).padStart(2, "0")}`;
+};
+const offPeakDuration = ({ start, end }: OffPeakWindow) => (timeToMinutes(end) - timeToMinutes(start) + 1440) % 1440;
+const formatDuration = (minutes: number) => minutes % 60 ? `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")}` : `${minutes / 60} h`;
+const offPeakSegments = ({ start, end }: OffPeakWindow) => {
+  const startMinutes = timeToMinutes(start);
+  const endMinutes = timeToMinutes(end);
+  if (startMinutes === endMinutes) return [];
+  if (startMinutes < endMinutes) return [{ left: startMinutes / 14.4, width: (endMinutes - startMinutes) / 14.4 }];
+  return [{ left: 0, width: endMinutes / 14.4 }, { left: startMinutes / 14.4, width: (1440 - startMinutes) / 14.4 }];
+};
 
 export default function Home() {
   const [tariffs, setTariffs] = useState<Tariff[]>(DEFAULT_TARIFFS);
@@ -66,6 +92,8 @@ export default function Home() {
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
   const [installHelp, setInstallHelp] = useState(false);
   const [isInstalled, setIsInstalled] = useState(false);
+  const [offPeakWindows, setOffPeakWindows] = useState<OffPeakWindow[]>(DEFAULT_HC_WINDOWS);
+  const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -77,6 +105,12 @@ export default function Home() {
         if (Number.isFinite(state.annualKwh)) setAnnualKwh(state.annualKwh);
         if (Number.isFinite(state.backgroundHcShare)) setBackgroundHcShare(state.backgroundHcShare);
         if (Array.isArray(state.appliances)) setAppliances(state.appliances);
+        if (Array.isArray(state.offPeakWindows)) {
+          const savedWindows = state.offPeakWindows
+            .filter((window: Partial<OffPeakWindow>) => validTime(window.start) && validTime(window.end))
+            .map((window: OffPeakWindow, index: number) => ({ ...window, id: Number.isFinite(window.id) ? window.id : index + 1 }));
+          if (savedWindows.length) setOffPeakWindows(savedWindows);
+        }
         if (state.consumptionMode === "fixed" || state.consumptionMode === "proportional") {
           setConsumptionMode(state.consumptionMode);
           if (Number.isFinite(state.recipeReferenceKwh) && state.recipeReferenceKwh > 0) setRecipeReferenceKwh(state.recipeReferenceKwh);
@@ -111,8 +145,8 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("hphc-simulator-state", JSON.stringify({ tariffs, power, annualKwh, backgroundHcShare, appliances, consumptionMode, recipeReferenceKwh }));
-  }, [tariffs, power, annualKwh, backgroundHcShare, appliances, consumptionMode, recipeReferenceKwh]);
+    localStorage.setItem("hphc-simulator-state", JSON.stringify({ tariffs, power, annualKwh, backgroundHcShare, appliances, consumptionMode, recipeReferenceKwh, offPeakWindows }));
+  }, [tariffs, power, annualKwh, backgroundHcShare, appliances, consumptionMode, recipeReferenceKwh, offPeakWindows]);
 
   const activeTariff = tariffs.find((tariff) => tariff.power === power) ?? tariffs[0];
   const effectiveAppliances = useMemo(() => {
@@ -181,6 +215,14 @@ export default function Home() {
     }]);
   }
 
+  function updateOffPeakWindow(id: number, patch: Partial<OffPeakWindow>) {
+    setOffPeakWindows((current) => current.map((window) => window.id === id ? { ...window, ...patch } : window));
+  }
+
+  function addOffPeakWindow() {
+    setOffPeakWindows((current) => current.length >= 8 ? current : [...current, { id: Date.now(), start: "22:00", end: "06:00" }]);
+  }
+
   function setTotalHcShare(totalShare: number) {
     if (annualKwh <= 0 || results.backgroundKwh <= 0) return;
     const desiredHcKwh = annualKwh * totalShare / 100;
@@ -233,6 +275,7 @@ export default function Home() {
   const verdictPositive = results.delta > 1;
   const verdictNeutral = Math.abs(results.delta) <= 1;
   const annualSliderMax = Math.max(20000, Math.ceil(annualKwh / 5000) * 5000);
+  const schedulesCustomized = offPeakWindows.length !== DEFAULT_HC_WINDOWS.length || offPeakWindows.some((window, index) => window.start !== DEFAULT_HC_WINDOWS[index]?.start || window.end !== DEFAULT_HC_WINDOWS[index]?.end);
 
   return (
     <main>
@@ -330,15 +373,25 @@ export default function Home() {
       <section className="timeline-section">
         <div className="timeline-copy"><p className="eyebrow">COMPRENDRE EN UN COUP D’ŒIL</p><h2>Les heures creuses en Corse</h2><p>EDF Corse indique quatre créneaux nocturnes possibles de 8 heures consécutives. La plage attribuée dépend de votre compteur.</p></div>
         <div className="timeline-card">
+          <div className="timeline-card-heading"><span>PLAGES HORAIRES {schedulesCustomized && <b>PERSONNALISÉES</b>}</span><button type="button" onClick={() => setScheduleEditorOpen((open) => !open)}>{scheduleEditorOpen ? "✓ Terminer" : "✎ Modifier"}</button></div>
+          {scheduleEditorOpen && <div className="hc-editor">
+            {offPeakWindows.map((window, index) => <div className="hc-editor-row" key={window.id}>
+              <span>Plage {index + 1}</span>
+              <label>Début<input aria-label={`Début de la plage ${index + 1}`} type="time" value={window.start} onChange={(event) => { if (validTime(event.target.value)) updateOffPeakWindow(window.id, { start: event.target.value }); }} /></label>
+              <b>→</b>
+              <label>Fin<input aria-label={`Fin de la plage ${index + 1}`} type="time" value={window.end} onChange={(event) => { if (validTime(event.target.value)) updateOffPeakWindow(window.id, { end: event.target.value }); }} /></label>
+              <small className={offPeakDuration(window) === 480 ? "valid" : ""}>{formatDuration(offPeakDuration(window))}</small>
+              <button className="remove-window" type="button" aria-label={`Supprimer la plage ${index + 1}`} disabled={offPeakWindows.length === 1} onClick={() => setOffPeakWindows((current) => current.filter((item) => item.id !== window.id))}>×</button>
+            </div>)}
+            <div className="hc-editor-actions"><button type="button" disabled={offPeakWindows.length >= 8} onClick={addOffPeakWindow}>＋ Ajouter une plage</button><button type="button" onClick={() => setOffPeakWindows(DEFAULT_HC_WINDOWS)}>↺ Horaires EDF</button></div>
+            <p>Une plage officielle dure 8 h. Les modifications mettent immédiatement à jour le graphique et restent enregistrées sur cet appareil.</p>
+          </div>}
           <div className="timeline-hours"><span>00h</span><span>06h</span><span>12h</span><span>18h</span><span>24h</span></div>
-          <div className="hc-windows" aria-label="Les quatre plages d’heures creuses possibles en Corse">
-            <div className="hc-window"><strong>21 h 40–5 h 40</strong><div className="hc-bar"><i style={{ width: "23.61%" }} /><i style={{ left: "90.28%", width: "9.72%" }} /></div></div>
-            <div className="hc-window"><strong>22 h 10–6 h 10</strong><div className="hc-bar"><i style={{ width: "25.69%" }} /><i style={{ left: "92.36%", width: "7.64%" }} /></div></div>
-            <div className="hc-window"><strong>22 h 45–6 h 45</strong><div className="hc-bar"><i style={{ width: "28.13%" }} /><i style={{ left: "94.79%", width: "5.21%" }} /></div></div>
-            <div className="hc-window"><strong>23 h 45–7 h 45</strong><div className="hc-bar"><i style={{ width: "32.29%" }} /><i style={{ left: "98.96%", width: "1.04%" }} /></div></div>
+          <div className="hc-windows" aria-label="Plages d’heures creuses affichées">
+            {offPeakWindows.map((window) => <div className="hc-window" key={window.id}><strong>{formatTime(window.start)}–{formatTime(window.end)}</strong><div className="hc-bar">{offPeakSegments(window).map((segment, index) => <i key={index} style={{ left: `${segment.left}%`, width: `${segment.width}%` }} />)}</div></div>)}
           </div>
           <div className="hc-legend"><span><i /> Heures creuses</span><span><i /> Heures pleines</span></div>
-          <p className="timeline-note"><strong>Votre horaire exact</strong> figure sur votre facture ou dans l’application EDF DOM & Corse. Source : <a href="https://corse.edf.fr/sites/sei_corse/files/2026-08/bleu_residentiel_corse.pdf" target="_blank" rel="noreferrer">grille EDF Corse au 1er août 2026</a>.</p>
+          <p className="timeline-note"><strong>Votre horaire exact</strong> figure sur votre facture ou dans l’application EDF DOM & Corse. Horaires proposés par défaut : <a href="https://corse.edf.fr/sites/sei_corse/files/2026-08/bleu_residentiel_corse.pdf" target="_blank" rel="noreferrer">grille EDF Corse au 1er août 2026</a>.</p>
         </div>
       </section>
       <footer><span>Déclic HC · outil indépendant de sensibilisation</span><span>Données enregistrées uniquement sur cet appareil</span></footer>
