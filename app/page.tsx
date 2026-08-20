@@ -96,7 +96,9 @@ export default function Home() {
     const threshold = denominator > 0
       ? clamp(((activeTariff.hpPrice - activeTariff.basePrice) * annualKwh + activeTariff.hphcSubscription - activeTariff.baseSubscription) / (denominator * Math.max(1, annualKwh)) * 100, 0, 100)
       : 100;
-    return { flexibleKwh, hcKwh, hpKwh, baseCost, hphcCost, delta, share, threshold };
+    const minShare = annualKwh > 0 ? scheduledHc / annualKwh * 100 : 0;
+    const maxShare = annualKwh > 0 ? (scheduledHc + backgroundKwh) / annualKwh * 100 : 0;
+    return { flexibleKwh, backgroundKwh, scheduledHc, hcKwh, hpKwh, baseCost, hphcCost, delta, share, threshold, minShare, maxShare };
   }, [activeTariff, annualKwh, effectiveAppliances, backgroundHcShare]);
 
   function updateTariff(field: keyof Omit<Tariff, "power">, value: number) {
@@ -127,6 +129,13 @@ export default function Home() {
   function addAppliance() {
     const storedKwh = consumptionMode === "proportional" && annualKwh > 0 ? 150 * recipeReferenceKwh / annualKwh : 150;
     setAppliances((current) => [...current, { id: Date.now(), name: "Nouvel usage", kwh: storedKwh, inOffPeak: true }]);
+  }
+
+  function setTotalHcShare(totalShare: number) {
+    if (annualKwh <= 0 || results.backgroundKwh <= 0) return;
+    const desiredHcKwh = annualKwh * totalShare / 100;
+    const backgroundShare = (desiredHcKwh - results.scheduledHc) / results.backgroundKwh * 100;
+    setBackgroundHcShare(clamp(backgroundShare, 0, 100));
   }
 
   function exportGrid() {
@@ -208,8 +217,9 @@ export default function Home() {
                 <small>Leurs kWh restent identiques, même si le total du foyer change.</small>
               </button>
             </fieldset>
-            <label className="range-label"><span>Part naturelle des autres usages en heures creuses <strong>{backgroundHcShare} %</strong></span><input type="range" min="0" max="60" value={backgroundHcShare} onChange={(e) => setBackgroundHcShare(Number(e.target.value))} /></label>
-            <p className="hint">Éclairage, froid, cuisson… hors appareils listés ci-dessous.</p>
+            <label className="range-label"><span>Répartition totale en heures creuses <strong>{results.share.toFixed(0)} %</strong></span><input type="range" min={results.minShare} max={results.maxShare} step="1" value={results.share} disabled={results.backgroundKwh <= 0} onInput={(e) => setTotalHcShare(Number(e.currentTarget.value))} /></label>
+            <div className="range-scale"><span>Minimum {results.minShare.toFixed(0)} %</span><span>Maximum {results.maxShare.toFixed(0)} %</span></div>
+            <p className="hint">Le curseur agit sur les usages non listés. Les appareils programmés fixent les limites atteignables.</p>
           </section>
 
           <section className="panel appliance-panel">

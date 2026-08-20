@@ -67,6 +67,8 @@ main { min-height:100vh; overflow:hidden; }
 .range-label>span { display:flex; justify-content:space-between; }
 .range-label strong { color:var(--ink); }
 input[type="range"] { width:100%; margin:13px 0 0; accent-color:#4d806b; }
+.range-scale { display:flex; justify-content:space-between; margin-top:3px; color:#899590; font:700 8px var(--font-geist-mono),monospace; text-transform:uppercase; letter-spacing:.4px; }
+input[type="range"]:disabled { opacity:.4; cursor:not-allowed; }
 .hint { margin:6px 0 0; color:#88928f; font-size:11px; }
 .appliance-list { display:grid; gap:10px; }
 .appliance { display:grid; grid-template-columns:minmax(110px,1fr) 112px 190px; gap:10px; align-items:center; padding:11px; border:1px solid #e1dfd7; border-radius:13px; background:white; position:relative; }
