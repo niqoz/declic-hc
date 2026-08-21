@@ -79,27 +79,6 @@ const offPeakSegments = ({ start, end }: OffPeakWindow) => {
   return [{ left: 0, width: endMinutes / 14.4 }, { left: startMinutes / 14.4, width: (1440 - startMinutes) / 14.4 }];
 };
 
-const prepareRangeInteraction = (event: ReactPointerEvent<HTMLInputElement>) => {
-  const activeElement = document.activeElement;
-  if (activeElement instanceof HTMLInputElement && activeElement.type === "number") {
-    activeElement.blur();
-  }
-
-  const range = event.currentTarget;
-  const bounds = range.getBoundingClientRect();
-  const min = Number(range.min);
-  const max = Number(range.max);
-  const ratio = max > min ? clamp((range.valueAsNumber - min) / (max - min), 0, 1) : 0;
-  const thumbDiameter = 20;
-  const thumbCenter = bounds.left + thumbDiameter / 2 + ratio * Math.max(0, bounds.width - thumbDiameter);
-  const hitRadius = event.pointerType === "touch" ? 24 : 12;
-
-  if (Math.abs(event.clientX - thumbCenter) > hitRadius) {
-    event.preventDefault();
-  }
-  range.focus({ preventScroll: true });
-};
-
 const DEFAULT_SIMULATOR_STATE: SimulatorState = {
   version: CURRENT_STATE_VERSION,
   tariffs: DEFAULT_TARIFFS,
@@ -396,10 +375,10 @@ export default function Home() {
             </div>
             <label className="annual-slider">
               <span>Ajuster la consommation <strong>{number.format(annualKwh)} kWh/an</strong></span>
-              <input aria-label="Consommation annuelle en kilowattheures" type="range" min="0" max={annualSliderMax} step="100" value={annualKwh} onPointerDown={prepareRangeInteraction} onInput={(e) => updateAnnualKwh(Number(e.currentTarget.value))} />
+              <ThumbOnlyRange aria-label="Consommation annuelle en kilowattheures" min={0} max={annualSliderMax} step={100} value={annualKwh} onValueChange={updateAnnualKwh} />
               <small><span>0 kWh</span><span>{number.format(annualSliderMax)} kWh</span></small>
             </label>
-            <label className="range-label"><span>Répartition totale en heures creuses <strong>{results.share.toFixed(0)} %</strong></span><input type="range" min={results.minShare} max={results.maxShare} step="1" value={results.share} disabled={results.backgroundKwh <= 0} onPointerDown={prepareRangeInteraction} onInput={(e) => setTotalHcShare(Number(e.currentTarget.value))} /></label>
+            <label className="range-label"><span>Répartition totale en heures creuses <strong>{results.share.toFixed(0)} %</strong></span><ThumbOnlyRange aria-label="Répartition totale en heures creuses" min={results.minShare} max={results.maxShare} step={1} value={results.share} disabled={results.backgroundKwh <= 0} onValueChange={setTotalHcShare} /></label>
             <div className="range-scale"><span>Minimum {results.minShare.toFixed(0)} %</span><span>Maximum {results.maxShare.toFixed(0)} %</span></div>
             <p className="hint">Commencez le glissement sur la poignée. Le curseur agit sur les usages non listés ; les appareils programmés fixent les limites atteignables.</p>
           </section>
@@ -516,6 +495,90 @@ function NumericInput({ value, onValueChange, onFocus, onBlur, ...props }: Numer
       setDraft(String(value));
       onBlur?.(event);
     }}
+  />;
+}
+
+type ThumbOnlyRangeProps = Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "value" | "min" | "max" | "step" | "onChange" | "onInput" | "onPointerDown" | "onPointerMove" | "onPointerUp" | "onPointerCancel"> & {
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  onValueChange: (value: number) => void;
+};
+
+function ThumbOnlyRange({ value, min, max, step = 1, onValueChange, ...props }: ThumbOnlyRangeProps) {
+  const interactionPointer = useRef<number | null>(null);
+  const draggingPointer = useRef<number | null>(null);
+  const grabOffset = useRef(0);
+  const suppressNativeInput = useRef(false);
+  const thumbDiameter = 20;
+
+  const thumbCenter = (range: HTMLInputElement) => {
+    const bounds = range.getBoundingClientRect();
+    const ratio = max > min ? clamp((value - min) / (max - min), 0, 1) : 0;
+    return bounds.left + thumbDiameter / 2 + ratio * Math.max(0, bounds.width - thumbDiameter);
+  };
+
+  const updateFromPointer = (event: ReactPointerEvent<HTMLInputElement>) => {
+    if (draggingPointer.current !== event.pointerId) return;
+    event.preventDefault();
+    const range = event.currentTarget;
+    const bounds = range.getBoundingClientRect();
+    const usableWidth = Math.max(1, bounds.width - thumbDiameter);
+    const x = event.clientX - grabOffset.current - bounds.left - thumbDiameter / 2;
+    const rawValue = min + clamp(x / usableWidth, 0, 1) * (max - min);
+    const snappedValue = clamp(min + Math.round((rawValue - min) / step) * step, min, max);
+    const decimals = String(step).split(".")[1]?.length ?? 0;
+    onValueChange(Number(snappedValue.toFixed(decimals)));
+  };
+
+  const finishDrag = (event: ReactPointerEvent<HTMLInputElement>) => {
+    if (interactionPointer.current !== event.pointerId) return;
+    interactionPointer.current = null;
+    draggingPointer.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    window.setTimeout(() => { suppressNativeInput.current = false; }, 0);
+  };
+
+  return <input
+    {...props}
+    type="range"
+    min={min}
+    max={max}
+    step={step}
+    value={value}
+    onInput={(event) => {
+      if (suppressNativeInput.current) event.currentTarget.value = String(value);
+    }}
+    onChange={(event) => {
+      if (suppressNativeInput.current) {
+        event.currentTarget.value = String(value);
+        return;
+      }
+      onValueChange(Number(event.currentTarget.value));
+    }}
+    onPointerDown={(event) => {
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLInputElement && activeElement.type === "number") activeElement.blur();
+
+      event.preventDefault();
+      const range = event.currentTarget;
+      range.focus({ preventScroll: true });
+      suppressNativeInput.current = true;
+      interactionPointer.current = event.pointerId;
+      range.setPointerCapture(event.pointerId);
+      const center = thumbCenter(range);
+      const hitRadius = event.pointerType === "touch" ? 18 : 12;
+      if (Math.abs(event.clientX - center) > hitRadius) return;
+
+      draggingPointer.current = event.pointerId;
+      grabOffset.current = event.clientX - center;
+    }}
+    onPointerMove={updateFromPointer}
+    onPointerUp={finishDrag}
+    onPointerCancel={finishDrag}
   />;
 }
 
