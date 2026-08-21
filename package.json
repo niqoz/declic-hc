@@ -1,6 +1,6 @@
 {
   "name": "site-creator-vinext-starter",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -12,6 +12,7 @@
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test": "npm run test:simulation",
     "test:simulation": "tsc -p tsconfig.simulation.json && node --test tests/simulation.test.mjs",
+    "calibrate:elecdom": "python3 tools/calibrate_elecdom.py",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern dist-pages --ignore-pattern .test-dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },

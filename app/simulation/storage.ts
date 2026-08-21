@@ -1,5 +1,6 @@
 import { clamp } from "./calculate.js";
 import { INTERNAL_ESTIMATE_SOURCE } from "./presets.js";
+import { REFERENCE_RESIDENTS, scaleApplianceForHousehold } from "./scaling.js";
 import type {
   Appliance,
   AppliancePreset,
@@ -14,7 +15,7 @@ import type {
 } from "./types.js";
 
 export const STATE_STORAGE_KEY = "hphc-simulator-state";
-export const CURRENT_STATE_VERSION = 4;
+export const CURRENT_STATE_VERSION = 5;
 
 type StorageReader = Pick<Storage, "getItem">;
 type StorageWriter = Pick<Storage, "setItem">;
@@ -143,6 +144,32 @@ function migrateAppliances(
   });
 }
 
+function refreshCalibratedReferences(
+  appliances: Appliance[],
+  presets: AppliancePreset[],
+  annualKwh: number,
+  residents: number,
+) {
+  return appliances.map((appliance) => {
+    if (appliance.calculationMode !== "reference") return appliance;
+    const preset = presets.find((candidate) => candidate.type === appliance.type);
+    if (!preset) return appliance;
+    return scaleApplianceForHousehold({
+      ...appliance,
+      annualKwh: preset.annualKwh,
+      lowKwh: preset.lowKwh,
+      highKwh: preset.highKwh,
+      source: cloneSource(preset.source),
+    }, {
+      annualKwh: 4500,
+      residents: REFERENCE_RESIDENTS,
+    }, {
+      annualKwh,
+      residents,
+    });
+  });
+}
+
 function migrateWindows(value: unknown, fallback: OffPeakWindow[]) {
   if (!Array.isArray(value)) return fallback.map((window) => ({ ...window }));
   const windows = value.flatMap((candidate, index) => {
@@ -176,19 +203,24 @@ export function migrateSimulationState(
   const activeOffPeakWindowId = offPeakWindows.some((window) => window.id === requestedWindowId)
     ? requestedWindowId
     : offPeakWindows[0].id;
+  const residents = isFiniteNonNegative(state.residents) && state.residents >= 1
+    ? Math.min(12, Math.round(state.residents))
+    : defaults.residents;
+  const migratedAppliances = migrateAppliances(state, defaults.appliances, presets, annualKwh);
+  const appliances = Number(state.version ?? 0) < CURRENT_STATE_VERSION
+    ? refreshCalibratedReferences(migratedAppliances, presets, annualKwh, residents)
+    : migratedAppliances;
 
   return {
     version: CURRENT_STATE_VERSION,
     tariffs,
     power,
     annualKwh,
-    residents: isFiniteNonNegative(state.residents) && state.residents >= 1
-      ? Math.min(12, Math.round(state.residents))
-      : defaults.residents,
+    residents,
     backgroundHcShare: Number.isFinite(state.backgroundHcShare)
       ? clamp(Number(state.backgroundHcShare), 0, 100)
       : defaults.backgroundHcShare,
-    appliances: migrateAppliances(state, defaults.appliances, presets, annualKwh),
+    appliances,
     offPeakWindows,
     activeOffPeakWindowId,
   };

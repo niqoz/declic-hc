@@ -130,6 +130,13 @@ input[type="range"]:disabled { opacity:.4; cursor:not-allowed; }
 .assumption-range input { width:100%; accent-color:#356d5e; }
 .assumption-range input:disabled { opacity:.45; }
 .offpeak-assumption { margin:10px 0 0; padding:8px 9px; border-radius:8px; background:#e5f2e8; color:#356d5e; font-size:9px; line-height:1.45; }
+.calibration-status { margin:8px 0 0; padding:9px; display:grid; gap:3px; border-radius:8px; background:#edf4ef; color:#45665d; font-size:8px; line-height:1.45; }
+.calibration-status strong { width:max-content; padding:2px 6px; border-radius:8px; background:#5b9675; color:white; font-size:7px; letter-spacing:.4px; text-transform:uppercase; }
+.calibration-status.medium { background:#fff3d4; color:#765b1d; }
+.calibration-status.medium strong { background:#c99c39; }
+.calibration-status.insufficient { background:#f7e9e1; color:#865644; }
+.calibration-status.insufficient strong { background:#b36d55; }
+.calibration-status em { font-style:normal; font-weight:750; }
 .appliance-source { margin:10px 0 1px; padding:8px 9px; border-radius:8px; background:#fff4d8; color:#806222; font-size:8px; line-height:1.45; }
 .appliance-source.measured,.appliance-source.user { background:#e5f2e8; color:#356d5e; }
 .appliance-source a { color:inherit; font-weight:800; }

@@ -10,7 +10,8 @@ import {
   calculateSimulation,
 } from "../.test-dist/calculate.js";
 import { APPLIANCE_PRESETS, DEFAULT_APPLIANCES } from "../.test-dist/presets.js";
-import { scaleAppliancesForHousehold } from "../.test-dist/scaling.js";
+import { ELECDOM_DATA_QUALITY, getApplianceCalibration } from "../.test-dist/calibration.js";
+import { householdScaleFactor, scaleAppliancesForHousehold } from "../.test-dist/scaling.js";
 import {
   CURRENT_STATE_VERSION,
   loadSimulationState,
@@ -52,22 +53,22 @@ test("calcule séparément les coûts Base et HP/HC", () => {
 test("reproduit le scénario central de l'interface", () => {
   const result = calculateSimulation({ annualKwh: 4500, backgroundHcShare: 25, tariff, appliances });
 
-  closeTo(result.declaredApplianceKwh, 1580);
-  closeTo(result.declaredShiftableKwh, 1580);
-  closeTo(result.backgroundKwh, 2920);
-  closeTo(result.scheduledHc, 1580);
-  closeTo(result.hcKwh, 2310);
-  closeTo(result.hpKwh, 2190);
+  closeTo(result.declaredApplianceKwh, 1513);
+  closeTo(result.declaredShiftableKwh, 1513);
+  closeTo(result.backgroundKwh, 2987);
+  closeTo(result.scheduledHc, 1513);
+  closeTo(result.hcKwh, 2259.75);
+  closeTo(result.hpKwh, 2240.25);
   closeTo(result.baseCost, 1000.86);
-  closeTo(result.hphcCost, 942.243);
-  closeTo(result.delta, 58.617);
+  closeTo(result.hphcCost, 944.790675);
+  closeTo(result.delta, 56.069325);
   closeTo(result.threshold, 25.64102564102564);
   assert.deepEqual(result.warnings, []);
 });
 
 test("place toujours 100 % des consommateurs opportunistes en HC", () => {
   const appliance = { ...appliances[0], shiftableShare: 80, offPeakShare: 50 };
-  closeTo(calculateApplianceOffPeakKwh(appliance), 1200);
+  closeTo(calculateApplianceOffPeakKwh(appliance), appliances[0].annualKwh);
 });
 
 test("préserve toujours le bilan énergétique et plafonne les usages", () => {
@@ -134,7 +135,7 @@ test("sauvegarde une version explicite et recharge le même état", () => {
   assert.deepEqual(loadSimulationState(storage, defaultState, APPLIANCE_PRESETS), defaultState);
 });
 
-test("fige à sa valeur affichée un ancien appareil proportionnel", () => {
+test("recalibre un ancien appareil de référence lors de la migration", () => {
   const legacy = {
     version: 2,
     annualKwh: 7200,
@@ -147,14 +148,16 @@ test("fige à sa valeur affichée un ancien appareil proportionnel", () => {
   const migrated = loadSimulationState({ getItem: () => JSON.stringify(legacy) }, defaultState, APPLIANCE_PRESETS);
 
   assert.equal(migrated.version, CURRENT_STATE_VERSION);
-  assert.equal(migrated.appliances[0].annualKwh, 1920);
-  assert.equal(migrated.appliances[0].lowKwh, 1440);
-  assert.equal(migrated.appliances[0].highKwh, 2560);
+  const preset = APPLIANCE_PRESETS.find((candidate) => candidate.type === "water-heater");
+  const factor = householdScaleFactor("water-heater", { annualKwh: 4500, residents: 2 }, { annualKwh: 7200, residents: 2 });
+  closeTo(migrated.appliances[0].annualKwh, preset.annualKwh * factor);
+  closeTo(migrated.appliances[0].lowKwh, preset.lowKwh * factor);
+  closeTo(migrated.appliances[0].highKwh, preset.highKwh * factor);
   assert.equal(migrated.appliances[0].offPeakShare, 100);
   assert.equal(migrated.residents, 2);
 
   const afterHouseholdChange = calculateSimulation({ annualKwh: 10000, backgroundHcShare: 25, tariff, appliances: migrated.appliances });
-  assert.equal(afterHouseholdChange.declaredApplianceKwh, 1920);
+  closeTo(afterHouseholdChange.declaredApplianceKwh, preset.annualKwh * factor);
 });
 
 test("migre une sauvegarde plus ancienne et répare ses plages invalides", () => {
@@ -171,7 +174,9 @@ test("migre une sauvegarde plus ancienne et répare ses plages invalides", () =>
   assert.equal(migrated.version, CURRENT_STATE_VERSION);
   assert.equal(migrated.annualKwh, 7200);
   assert.equal(migrated.backgroundHcShare, 100);
-  assert.equal(migrated.appliances[0].annualKwh, 1200);
+  const preset = APPLIANCE_PRESETS.find((candidate) => candidate.type === "water-heater");
+  const factor = householdScaleFactor("water-heater", { annualKwh: 4500, residents: 2 }, { annualKwh: 7200, residents: 2 });
+  closeTo(migrated.appliances[0].annualKwh, preset.annualKwh * factor);
   assert.equal(migrated.appliances[0].calculationMode, "reference");
   assert.deepEqual(migrated.offPeakWindows, defaultState.offPeakWindows);
   assert.equal(migrated.activeOffPeakWindowId, 1);
@@ -182,6 +187,20 @@ test("revient aux valeurs par défaut lorsque la sauvegarde est corrompue", () =
   assert.deepEqual(state, defaultState);
   assert.notEqual(state.appliances, defaultState.appliances);
   assert.notEqual(state.appliances[0].source, defaultState.appliances[0].source);
+});
+
+test("embarque une calibration ElecDom documentée et contrôlée", () => {
+  const waterHeater = getApplianceCalibration("water-heater");
+  const washingMachine = getApplianceCalibration("washing-machine");
+  const pool = getApplianceCalibration("pool-pump");
+
+  assert.equal(ELECDOM_DATA_QUALITY.rows, 2263);
+  assert.equal(ELECDOM_DATA_QUALITY.duplicateGeneralObservations, 0);
+  assert.equal(waterHeater.sampleSize, 55);
+  assert.equal(waterHeater.confidence, "good");
+  assert.equal(washingMachine.referenceAnnualKwh, 85);
+  assert.equal(pool.confidence, "insufficient");
+  assert.equal(pool.excludedObservations, 1);
 });
 
 test("utilise le même numéro de version dans la PWA, le cache et le paquet", async () => {
@@ -195,7 +214,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.3.1");
+  assert.equal(version, "0.4.0");
   assert.match(pageSource, /v\{APP_VERSION\}/);
   assert.equal(JSON.parse(manifestSource).version, version);
   assert.match(serviceWorkerSource, new RegExp(`declic-hc-v${version?.replaceAll(".", "\\.")}`));

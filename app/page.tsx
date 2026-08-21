@@ -6,6 +6,7 @@ import {
   clamp,
   HOUSEHOLD_REFERENCE_KWH,
 } from "./simulation/calculate";
+import { confidenceLabel, getApplianceCalibration } from "./simulation/calibration";
 import {
   APPLIANCE_PRESETS,
   DEFAULT_APPLIANCES,
@@ -385,7 +386,9 @@ export default function Home() {
           <section className="panel appliance-panel">
             <div className="step-heading"><span>02</span><div><p>USAGES FLEXIBLES</p><h2>À vous de les décaler</h2></div></div>
             <div className="behavior-guide"><span><strong>Courbe adaptée au foyer</strong>Les usages liés au ménage évoluent avec {residents} habitant{residents > 1 ? "s" : ""} et les kWh annuels. Véhicule, piscine et climatisation restent indépendants.</span><div className="usage-balance"><b>{number.format(results.declaredApplianceKwh)} kWh</b><small>usages listés</small><b>{number.format(results.backgroundKwh)} kWh</b><small>reste du foyer</small></div></div>
-            <div className="appliance-list">{appliances.map((appliance) => <article className="appliance" key={appliance.id}>
+            <div className="appliance-list">{appliances.map((appliance) => {
+              const calibration = getApplianceCalibration(appliance.type);
+              return <article className="appliance" key={appliance.id}>
               <button className="remove" aria-label={`Retirer ${appliance.name}`} onClick={() => setAppliances((current) => current.filter((item) => item.id !== appliance.id))}>×</button>
               <div className="appliance-identity"><input className="appliance-name" aria-label="Nom de l’usage" value={appliance.name} onChange={(e) => updateAppliance(appliance.id, { name: e.target.value })} /><span className={`behavior-toggle ${appliance.calculationMode}`}><i />{appliance.calculationMode === "measured" ? "Valeur mesurée" : appliance.calculationMode === "detailed" ? "Calcul détaillé" : "Valeur de référence"}</span></div>
               <div className="appliance-energy"><NumericInput aria-label={`Consommation annuelle de ${appliance.name}`} min={0} step={10} value={Math.round(appliance.annualKwh)} onValueChange={(value) => updateApplianceKwh(appliance.id, value)} /><span>kWh/an</span></div>
@@ -398,16 +401,17 @@ export default function Home() {
                   <label>Estimation haute<div className="compact-input"><NumericInput min={appliance.annualKwh} step={10} disabled={appliance.calculationMode === "measured"} value={Math.round(appliance.highKwh)} onValueChange={(value) => updateAppliance(appliance.id, { highKwh: Math.max(appliance.annualKwh, value) })} /><span>kWh</span></div></label>
                 </div>
                 <p className="offpeak-assumption"><strong>Placement retenu :</strong> 100 % de cet usage opportuniste pendant les heures creuses.</p>
+                {calibration && <p className={`calibration-status ${calibration.confidence}`}><strong>Fiabilité {confidenceLabel(calibration.confidence)}</strong>{calibration.sampleSize > 0 ? <>Échantillon : {calibration.sampleSize} logements · coefficient foyer {calibration.descriptiveExponent.toFixed(2)} (intervalle 95 % : {calibration.descriptiveExponentCi95[0].toFixed(2)}–{calibration.descriptiveExponentCi95[1].toFixed(2)}).</> : <>Aucune voiture électrique exploitable dans le fichier ouvert.</>} {!calibration.residentCalibrated && calibration.residentExponent > 0 && <em>La correction selon les habitants reste indicative.</em>}</p>}
                 <p className={`appliance-source ${appliance.source.kind}`}>Source : <strong>{appliance.source.organization}</strong> — {appliance.source.label}{appliance.source.year ? ` (${appliance.source.year})` : ""}{appliance.source.url && <> · <a href={appliance.source.url} target="_blank" rel="noreferrer">consulter</a></>}</p>
               </details>
-            </article>)}</div>
+            </article>})}</div>
             <details className="preset-library">
               <summary>＋ Ajouter un consommateur préenregistré</summary>
-              <div className="preset-heading"><strong>Modèles opportunistes</strong><span>Estimations indicatives, modifiables après ajout</span></div>
+              <div className="preset-heading"><strong>Modèles opportunistes</strong><span>Calibrés sur ElecDom lorsque l’échantillon est suffisant</span></div>
               <div className="preset-grid">
                 {APPLIANCE_PRESETS.map((preset) => <button type="button" key={preset.name} onClick={() => addAppliance(preset)}>
                   <span className="preset-icon">{preset.icon}</span>
-                  <span><strong>{preset.name}</strong><small>{preset.detail} · référence {REFERENCE_RESIDENTS} pers. · {number.format(preset.annualKwh)} kWh/an</small></span>
+                  <span><strong>{preset.name}</strong><small>{preset.detail} · {getApplianceCalibration(preset.type)?.confidence === "insufficient" ? "indicatif" : "calibré"} · {number.format(preset.annualKwh)} kWh/an</small></span>
                   <b>＋</b>
                 </button>)}
               </div>
