@@ -239,8 +239,6 @@ export default function Home() {
       lowKwh: 100,
       highKwh: 200,
       calculationMode: "reference" as CalculationMode,
-      shiftableShare: 100,
-      defaultOffPeakShare: 100,
       source: { ...INTERNAL_ESTIMATE_SOURCE },
     };
     const appliance = scaleApplianceForHousehold({
@@ -251,8 +249,6 @@ export default function Home() {
       lowKwh: model.lowKwh,
       highKwh: model.highKwh,
       calculationMode: model.calculationMode,
-      shiftableShare: model.shiftableShare,
-      offPeakShare: 100,
       source: { ...model.source },
     }, {
       annualKwh: HOUSEHOLD_REFERENCE_KWH,
@@ -287,8 +283,6 @@ export default function Home() {
       calculationMode: mode,
       lowKwh: preset ? preset.lowKwh * contextFactor * scale : appliance.annualKwh * 0.7,
       highKwh: preset ? preset.highKwh * contextFactor * scale : appliance.annualKwh * 1.3,
-      shiftableShare: 100,
-      offPeakShare: 100,
       source: { ...(preset?.source ?? INTERNAL_ESTIMATE_SOURCE) },
     });
   }

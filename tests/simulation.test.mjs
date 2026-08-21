@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
-  calculateApplianceOffPeakKwh,
   calculateBaseCost,
   calculateBreakEvenShare,
   calculateHphcCost,
@@ -64,7 +63,6 @@ test("reproduit le scénario central de l'interface", () => {
   const result = calculateSimulation({ annualKwh: 4500, backgroundHcShare: 25, tariff, appliances });
 
   closeTo(result.declaredApplianceKwh, 1513);
-  closeTo(result.declaredShiftableKwh, 1513);
   closeTo(result.backgroundKwh, 2987);
   closeTo(result.scheduledHc, 1513);
   closeTo(result.hcKwh, 2259.75);
@@ -79,11 +77,6 @@ test("reproduit le scénario central de l'interface", () => {
   closeTo(result.delta, 56.069325);
   closeTo(result.threshold, 25.64102564102564);
   assert.deepEqual(result.warnings, []);
-});
-
-test("place toujours 100 % des consommateurs opportunistes en HC", () => {
-  const appliance = { ...appliances[0], shiftableShare: 80, offPeakShare: 50 };
-  closeTo(calculateApplianceOffPeakKwh(appliance), appliances[0].annualKwh);
 });
 
 test("estime séparément le chauffage selon la surface, le système et l'occupation", () => {
@@ -118,8 +111,8 @@ test("retire le chauffage du reste du foyer et conserve le bilan énergétique",
 
 test("préserve toujours le bilan énergétique et plafonne les usages", () => {
   const oversized = [
-    { ...appliances[0], id: 10, name: "Usage A", annualKwh: 3000, lowKwh: 2500, highKwh: 3500, offPeakShare: 100 },
-    { ...appliances[1], id: 11, name: "Usage B", annualKwh: 2000, lowKwh: 1500, highKwh: 2500, offPeakShare: 0 },
+    { ...appliances[0], id: 10, name: "Usage A", annualKwh: 3000, lowKwh: 2500, highKwh: 3500 },
+    { ...appliances[1], id: 11, name: "Usage B", annualKwh: 2000, lowKwh: 1500, highKwh: 2500 },
   ];
   const result = calculateSimulation({ annualKwh: 4000, backgroundHcShare: 25, tariff, appliances: oversized });
 
@@ -141,7 +134,6 @@ test("fait évoluer les usages liés au foyer avec les kWh et les habitants", ()
   assert.ok(raised[0].annualKwh > appliances[0].annualKwh);
   assert.ok(raised[1].annualKwh > appliances[1].annualKwh);
   assert.ok(raised[2].annualKwh > appliances[2].annualKwh);
-  assert.ok(raised.every((appliance) => appliance.offPeakShare === 100 && appliance.shiftableShare === 100));
 
   const measured = scaleAppliancesForHousehold(
     [{ ...appliances[0], calculationMode: "measured", annualKwh: 1350 }],
@@ -198,7 +190,6 @@ test("recalibre un ancien appareil de référence lors de la migration", () => {
   closeTo(migrated.appliances[0].annualKwh, preset.annualKwh * factor);
   closeTo(migrated.appliances[0].lowKwh, preset.lowKwh * factor);
   closeTo(migrated.appliances[0].highKwh, preset.highKwh * factor);
-  assert.equal(migrated.appliances[0].offPeakShare, 100);
   assert.equal(migrated.residents, 2);
 
   const afterHouseholdChange = calculateSimulation({ annualKwh: 10000, backgroundHcShare: 25, tariff, appliances: migrated.appliances });

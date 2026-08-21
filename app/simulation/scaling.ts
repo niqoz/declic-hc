@@ -27,8 +27,6 @@ export function scaleApplianceForHousehold(appliance: Appliance, from: Household
     annualKwh: appliance.annualKwh * factor,
     lowKwh: appliance.lowKwh * factor,
     highKwh: appliance.highKwh * factor,
-    shiftableShare: 100,
-    offPeakShare: 100,
   };
 }
 

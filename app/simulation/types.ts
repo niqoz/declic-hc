@@ -27,15 +27,12 @@ export type Appliance = {
   lowKwh: number;
   highKwh: number;
   calculationMode: CalculationMode;
-  shiftableShare: number;
-  offPeakShare: number;
   source: ApplianceSource;
 };
 
-export type AppliancePreset = Omit<Appliance, "id" | "offPeakShare"> & {
+export type AppliancePreset = Omit<Appliance, "id"> & {
   icon: string;
   detail: string;
-  defaultOffPeakShare: number;
 };
 
 export type LegacyAppliance = Partial<Appliance> & {
@@ -90,8 +87,6 @@ export type SimulationWarning = {
 export type EnergyDistribution = {
   declaredApplianceKwh: number;
   applianceKwh: number;
-  declaredShiftableKwh: number;
-  shiftableKwh: number;
   backgroundKwh: number;
   backgroundHc: number;
   scheduledHc: number;

@@ -103,8 +103,6 @@ function sanitizeCurrentAppliance(candidate: LegacyAppliance, index: number, mat
     lowKwh,
     highKwh,
     calculationMode: validCalculationMode(candidate.calculationMode) ? candidate.calculationMode : "reference",
-    shiftableShare: 100,
-    offPeakShare: 100,
     source: sanitizeSource(candidate.source, matchingPreset?.source ?? INTERNAL_ESTIMATE_SOURCE),
   };
 }
@@ -136,8 +134,6 @@ function migrateLegacyAppliance(
     lowKwh,
     highKwh,
     calculationMode: "reference",
-    shiftableShare: 100,
-    offPeakShare: 100,
     source: cloneSource(matchingPreset?.source ?? INTERNAL_ESTIMATE_SOURCE),
   } satisfies Appliance;
 }

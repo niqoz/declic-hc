@@ -17,10 +17,6 @@ function nonNegative(value: number) {
   return Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
-export function calculateApplianceOffPeakKwh(appliance: Appliance) {
-  return nonNegative(appliance.annualKwh);
-}
-
 export function calculateEnergyDistribution(
   annualKwh: number,
   backgroundHcShare: number,
@@ -37,12 +33,10 @@ export function calculateEnergyDistribution(
     : 1;
   const applianceKwh = declaredApplianceKwh * applianceScale;
   const heatingKwh = declaredHeatingKwh * applianceScale;
-  const declaredShiftableKwh = declaredApplianceKwh;
-  const shiftableKwh = declaredShiftableKwh * applianceScale;
   const backgroundKwh = Math.max(0, safeAnnualKwh - applianceKwh - heatingKwh);
   const backgroundHc = backgroundKwh * safeBackgroundHcShare / 100;
   const scheduledHc = appliances.reduce(
-    (sum, appliance) => sum + calculateApplianceOffPeakKwh(appliance) * applianceScale,
+    (sum, appliance) => sum + nonNegative(appliance.annualKwh) * applianceScale,
     0,
   );
   const heatingHcShare = clamp(heating.hcShare, 0, 100);
@@ -57,8 +51,6 @@ export function calculateEnergyDistribution(
   return {
     declaredApplianceKwh,
     applianceKwh,
-    declaredShiftableKwh,
-    shiftableKwh,
     backgroundKwh,
     backgroundHc,
     scheduledHc,
@@ -113,8 +105,6 @@ export function validateSimulationInput(input: SimulationInput, declaredModeledK
       appliance.annualKwh,
       appliance.lowKwh,
       appliance.highKwh,
-      appliance.shiftableShare,
-      appliance.offPeakShare,
     ]),
   ];
 
@@ -124,11 +114,7 @@ export function validateSimulationInput(input: SimulationInput, declaredModeledK
       message: "Certaines valeurs invalides ont été ramenées à zéro pour effectuer la simulation.",
     });
   }
-  if (
-    input.backgroundHcShare < 0
-    || input.backgroundHcShare > 100
-    || input.appliances.some((appliance) => appliance.shiftableShare > 100 || appliance.offPeakShare > 100)
-  ) {
+  if (input.backgroundHcShare < 0 || input.backgroundHcShare > 100) {
     if (!warnings.some((warning) => warning.code === "INVALID_INPUT")) {
       warnings.push({
         code: "INVALID_INPUT",
