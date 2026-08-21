@@ -1,20 +1,26 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import {
+  calculateEffectiveAppliances,
+  calculateSimulation,
+  clamp,
+  HOUSEHOLD_REFERENCE_KWH,
+} from "./simulation/calculate";
+import {
+  CURRENT_STATE_VERSION,
+  loadSimulationState,
+  saveSimulationState,
+} from "./simulation/storage";
+import type {
+  Appliance,
+  AppliancePreset,
+  ConsumptionMode,
+  OffPeakWindow,
+  SimulatorState,
+  Tariff,
+} from "./simulation/types";
 
-type Tariff = {
-  power: number;
-  baseSubscription: number;
-  hphcSubscription: number;
-  basePrice: number;
-  hpPrice: number;
-  hcPrice: number;
-};
-
-type ConsumptionMode = "proportional" | "fixed";
-type Appliance = { id: number; name: string; kwh: number; inOffPeak: boolean; mode: ConsumptionMode; referenceKwh: number };
-type AppliancePreset = { name: string; kwh: number; icon: string; detail: string; mode: ConsumptionMode; referenceKwh: number };
-type OffPeakWindow = { id: number; start: string; end: string };
 type InstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
@@ -59,8 +65,6 @@ const DEFAULT_HC_WINDOWS: OffPeakWindow[] = [
 const euros = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
 const preciseEuros = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", minimumFractionDigits: 2 });
 const number = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 });
-const HOUSEHOLD_REFERENCE_KWH = 4500;
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
 const validTime = (value: unknown): value is string => typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 const timeToMinutes = (value: string) => {
   const [hours, minutes] = value.split(":").map(Number);
@@ -80,6 +84,17 @@ const offPeakSegments = ({ start, end }: OffPeakWindow) => {
   return [{ left: 0, width: endMinutes / 14.4 }, { left: startMinutes / 14.4, width: (1440 - startMinutes) / 14.4 }];
 };
 
+const DEFAULT_SIMULATOR_STATE: SimulatorState = {
+  version: CURRENT_STATE_VERSION,
+  tariffs: DEFAULT_TARIFFS,
+  power: 6,
+  annualKwh: HOUSEHOLD_REFERENCE_KWH,
+  backgroundHcShare: 25,
+  appliances: DEFAULT_APPLIANCES,
+  offPeakWindows: DEFAULT_HC_WINDOWS,
+  activeOffPeakWindowId: DEFAULT_HC_WINDOWS[0].id,
+};
+
 export default function Home() {
   const [tariffs, setTariffs] = useState<Tariff[]>(DEFAULT_TARIFFS);
   const [power, setPower] = useState(6);
@@ -94,42 +109,20 @@ export default function Home() {
   const [offPeakWindows, setOffPeakWindows] = useState<OffPeakWindow[]>(DEFAULT_HC_WINDOWS);
   const [activeOffPeakWindowId, setActiveOffPeakWindowId] = useState(DEFAULT_HC_WINDOWS[0].id);
   const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false);
+  const [storageReady, setStorageReady] = useState(false);
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("hphc-simulator-state");
-      if (saved) {
-        const state = JSON.parse(saved);
-        if (Array.isArray(state.tariffs)) setTariffs(state.tariffs);
-        if (Number.isFinite(state.power)) setPower(state.power);
-        if (Number.isFinite(state.annualKwh)) setAnnualKwh(state.annualKwh);
-        if (Number.isFinite(state.backgroundHcShare)) setBackgroundHcShare(state.backgroundHcShare);
-        if (Array.isArray(state.appliances)) {
-          const savedAnnualKwh = Number.isFinite(state.annualKwh) && state.annualKwh > 0 ? state.annualKwh : 4500;
-          const legacyReferenceKwh = Number.isFinite(state.recipeReferenceKwh) && state.recipeReferenceKwh > 0 ? state.recipeReferenceKwh : savedAnnualKwh;
-          const legacyScale = state.consumptionMode === "proportional" ? savedAnnualKwh / legacyReferenceKwh : 1;
-          setAppliances(state.appliances.map((appliance: Partial<Appliance>, index: number) => {
-            const hasIndividualMode = appliance.mode === "fixed" || appliance.mode === "proportional";
-            const matchingPreset = APPLIANCE_PRESETS.find((preset) => preset.name === appliance.name);
-            return {
-              id: Number.isFinite(appliance.id) ? Number(appliance.id) : index + 1,
-              name: typeof appliance.name === "string" ? appliance.name : `Usage ${index + 1}`,
-              kwh: hasIndividualMode ? Math.max(0, Number(appliance.kwh) || 0) : matchingPreset?.kwh ?? Math.max(0, Number(appliance.kwh) || 0) * legacyScale,
-              inOffPeak: Boolean(appliance.inOffPeak),
-              mode: hasIndividualMode ? appliance.mode as ConsumptionMode : matchingPreset?.mode ?? "fixed",
-              referenceKwh: Number.isFinite(appliance.referenceKwh) && Number(appliance.referenceKwh) > 0 ? Number(appliance.referenceKwh) : matchingPreset?.referenceKwh ?? savedAnnualKwh,
-            };
-          }));
-        }
-        if (Array.isArray(state.offPeakWindows)) {
-          const savedWindows = state.offPeakWindows
-            .filter((window: Partial<OffPeakWindow>) => validTime(window.start) && validTime(window.end))
-            .map((window: OffPeakWindow, index: number) => ({ ...window, id: Number.isFinite(window.id) ? window.id : index + 1 }));
-          if (savedWindows.length) setOffPeakWindows(savedWindows);
-        }
-        if (Number.isFinite(state.activeOffPeakWindowId)) setActiveOffPeakWindowId(state.activeOffPeakWindowId);
-      }
-    } catch { /* Les valeurs par défaut restent actives. */ }
+    const state = loadSimulationState(localStorage, DEFAULT_SIMULATOR_STATE, APPLIANCE_PRESETS);
+    // Hydratation unique de la sauvegarde locale, disponible seulement après le montage côté client.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTariffs(state.tariffs);
+    setPower(state.power);
+    setAnnualKwh(state.annualKwh);
+    setBackgroundHcShare(state.backgroundHcShare);
+    setAppliances(state.appliances);
+    setOffPeakWindows(state.offPeakWindows);
+    setActiveOffPeakWindowId(state.activeOffPeakWindowId);
+    setStorageReady(true);
     if ("serviceWorker" in navigator) {
       const serviceWorkerUrl = new URL("sw.js", document.baseURI);
       navigator.serviceWorker.register(serviceWorkerUrl.pathname).catch(() => undefined);
@@ -137,6 +130,8 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    // L'état d'installation dépend d'une API navigateur qui n'existe pas pendant le rendu serveur.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsInstalled(window.matchMedia("(display-mode: standalone)").matches);
     const capturePrompt = (event: Event) => {
       event.preventDefault();
@@ -156,40 +151,27 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("hphc-simulator-state", JSON.stringify({ tariffs, power, annualKwh, backgroundHcShare, appliances, offPeakWindows, activeOffPeakWindowId }));
-  }, [tariffs, power, annualKwh, backgroundHcShare, appliances, offPeakWindows, activeOffPeakWindowId]);
+    if (!storageReady) return;
+    saveSimulationState(localStorage, { tariffs, power, annualKwh, backgroundHcShare, appliances, offPeakWindows, activeOffPeakWindowId });
+  }, [storageReady, tariffs, power, annualKwh, backgroundHcShare, appliances, offPeakWindows, activeOffPeakWindowId]);
 
   useEffect(() => {
+    // Une plage active supprimée doit immédiatement basculer vers la première plage restante.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!offPeakWindows.some((window) => window.id === activeOffPeakWindowId)) setActiveOffPeakWindowId(offPeakWindows[0].id);
   }, [activeOffPeakWindowId, offPeakWindows]);
 
   const activeTariff = tariffs.find((tariff) => tariff.power === power) ?? tariffs[0];
   const activeOffPeakWindow = offPeakWindows.find((window) => window.id === activeOffPeakWindowId) ?? offPeakWindows[0];
-  const effectiveAppliances = useMemo(() => {
-    return appliances.map((appliance) => ({ ...appliance, kwh: appliance.kwh * (appliance.mode === "proportional" && appliance.referenceKwh > 0 ? annualKwh / appliance.referenceKwh : 1) }));
-  }, [annualKwh, appliances]);
+  const effectiveAppliances = useMemo(
+    () => calculateEffectiveAppliances(appliances, annualKwh),
+    [annualKwh, appliances],
+  );
 
-  const results = useMemo(() => {
-    const declaredFlexible = effectiveAppliances.reduce((sum, appliance) => sum + Math.max(0, appliance.kwh), 0);
-    const flexibleKwh = Math.min(annualKwh, declaredFlexible);
-    const ratio = declaredFlexible > annualKwh && declaredFlexible > 0 ? annualKwh / declaredFlexible : 1;
-    const backgroundKwh = Math.max(0, annualKwh - flexibleKwh);
-    const backgroundHc = backgroundKwh * backgroundHcShare / 100;
-    const scheduledHc = effectiveAppliances.filter((a) => a.inOffPeak).reduce((sum, a) => sum + a.kwh * ratio, 0);
-    const hcKwh = Math.min(annualKwh, backgroundHc + scheduledHc);
-    const hpKwh = annualKwh - hcKwh;
-    const baseCost = activeTariff.baseSubscription + annualKwh * activeTariff.basePrice;
-    const hphcCost = activeTariff.hphcSubscription + hpKwh * activeTariff.hpPrice + hcKwh * activeTariff.hcPrice;
-    const delta = baseCost - hphcCost;
-    const share = annualKwh > 0 ? hcKwh / annualKwh * 100 : 0;
-    const denominator = activeTariff.hpPrice - activeTariff.hcPrice;
-    const threshold = denominator > 0
-      ? clamp(((activeTariff.hpPrice - activeTariff.basePrice) * annualKwh + activeTariff.hphcSubscription - activeTariff.baseSubscription) / (denominator * Math.max(1, annualKwh)) * 100, 0, 100)
-      : 100;
-    const minShare = annualKwh > 0 ? scheduledHc / annualKwh * 100 : 0;
-    const maxShare = annualKwh > 0 ? (scheduledHc + backgroundKwh) / annualKwh * 100 : 0;
-    return { flexibleKwh, backgroundKwh, scheduledHc, hcKwh, hpKwh, baseCost, hphcCost, delta, share, threshold, minShare, maxShare };
-  }, [activeTariff, annualKwh, effectiveAppliances, backgroundHcShare]);
+  const results = useMemo(
+    () => calculateSimulation({ annualKwh, backgroundHcShare, tariff: activeTariff, appliances }),
+    [activeTariff, annualKwh, appliances, backgroundHcShare],
+  );
 
   function updateTariff(field: keyof Omit<Tariff, "power">, value: number) {
     setTariffs((current) => current.map((tariff) => tariff.power === power ? { ...tariff, [field]: Math.max(0, value) } : tariff));
@@ -368,7 +350,7 @@ export default function Home() {
               </div>
               <button type="button" className="custom-preset" onClick={() => addAppliance()}>＋ Créer un usage personnalisé</button>
             </details>
-            {results.flexibleKwh >= annualKwh && annualKwh > 0 && <p className="warning">La somme des usages flexibles atteint la consommation totale du foyer.</p>}
+            {results.warnings.map((warning) => <p className="warning" key={warning.code}>{warning.message}</p>)}
           </section>
         </div>
 

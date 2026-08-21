@@ -12,6 +12,7 @@
 
 # testing
 /coverage
+/.test-dist/
 
 # next.js
 /.next/
@@ -36,6 +37,7 @@ yarn-error.log*
 
 # typescript
 next-env.d.ts
+*.tsbuildinfo
 /dist/
 /dist-pages/
 /.wrangler/
