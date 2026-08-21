@@ -32,6 +32,10 @@ Cette commande :
 
 Les modèles reposant sur moins de 30 logements restent marqués « fiabilité insuffisante » et ne reçoivent pas de coefficient automatique. La correction selon le nombre d’habitants est volontairement signalée comme indicative, cette variable n’étant pas publiée par logement dans le fichier ouvert.
 
+La répartition HP/HC conserve par hypothèse 100 % des usages flexibles sélectionnés en heures creuses. Le chauffage, qui ne dispose pas d’un réglage d’accumulation, n’est compté en HC que pour les besoins ayant naturellement lieu pendant la plage tarifaire de huit heures. Les estimations basse et haute alimentent une fourchette de facture distincte du scénario central.
+
+La méthode complète et ses dates de référence sont décrites dans [`docs/modele-foyer.md`](docs/modele-foyer.md).
+
 ## Publication
 
 - `npm run build:pages` produit la version statique GitHub Pages dans `dist-pages`.

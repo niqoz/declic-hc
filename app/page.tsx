@@ -7,7 +7,7 @@ import {
   HOUSEHOLD_REFERENCE_KWH,
 } from "./simulation/calculate";
 import { confidenceLabel, getApplianceCalibration } from "./simulation/calibration";
-import { estimateHeating } from "./simulation/heating";
+import { estimateHeating, offPeakDurationMinutes, updateOffPeakWindowTime } from "./simulation/heating";
 import {
   APPLIANCE_PRESETS,
   DEFAULT_APPLIANCES,
@@ -18,6 +18,7 @@ import {
   downloadProfileJson,
   getActiveProfile,
   migrateFromLegacyState,
+  PROFILES_STORE_VERSION,
   readProfileFile,
   removeProfile,
   renameProfile,
@@ -81,7 +82,6 @@ const formatTime = (value: string) => {
   const [hours, minutes] = value.split(":").map(Number);
   return `${hours} h ${String(minutes).padStart(2, "0")}`;
 };
-const offPeakDuration = ({ start, end }: OffPeakWindow) => (timeToMinutes(end) - timeToMinutes(start) + 1440) % 1440;
 const formatDuration = (minutes: number) => minutes % 60 ? `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")}` : `${minutes / 60} h`;
 const offPeakSegments = ({ start, end }: OffPeakWindow) => {
   const startMinutes = timeToMinutes(start);
@@ -132,7 +132,8 @@ export default function Home() {
   const [activeOffPeakWindowId, setActiveOffPeakWindowId] = useState(DEFAULT_HC_WINDOWS[0].id);
   const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false);
   const [storageReady, setStorageReady] = useState(false);
-  const [profilesStore, setProfilesStore] = useState<ProfilesStore>({ version: 1, profiles: [], activeProfileId: null });
+  const [profilesStore, setProfilesStore] = useState<ProfilesStore>({ version: PROFILES_STORE_VERSION, profiles: [], activeProfileId: null });
+  const activeProfileId = profilesStore.activeProfileId;
   const importProfileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -185,14 +186,16 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!storageReady || !profilesStore.activeProfileId) return;
+    if (!storageReady || !activeProfileId) return;
     const stateInput: SimulatorStateInput = { tariffs, power, annualKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId };
-    const updated = upsertProfile(profilesStore, profilesStore.activeProfileId, stateInput);
-    // Mise à jour du magasin de profils après chaque changement d'état — synchronisation nécessaire.
+    // Mise à jour du profil actif sans redéclencher l'effet sur le nouvel objet magasin.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setProfilesStore(updated);
-    saveProfilesStore(localStorage, updated);
-  }, [storageReady, tariffs, power, annualKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId, profilesStore]);
+    setProfilesStore((current) => {
+      const updated = upsertProfile(current, activeProfileId, stateInput);
+      saveProfilesStore(localStorage, updated);
+      return updated;
+    });
+  }, [storageReady, tariffs, power, annualKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId, activeProfileId]);
 
   useEffect(() => {
     // Une plage active supprimée doit immédiatement basculer vers la première plage restante.
@@ -309,8 +312,10 @@ export default function Home() {
     });
   }
 
-  function updateOffPeakWindow(id: number, patch: Partial<OffPeakWindow>) {
-    setOffPeakWindows((current) => current.map((window) => window.id === id ? { ...window, ...patch } : window));
+  function updateOffPeakWindow(id: number, field: "start" | "end", value: string) {
+    setOffPeakWindows((current) => current.map((window) => (
+      window.id === id ? updateOffPeakWindowTime(window, field, value) : window
+    )));
   }
 
   function addOffPeakWindow() {
@@ -457,6 +462,17 @@ export default function Home() {
   const annualSliderMax = Math.max(20000, Math.ceil(annualKwh / 5000) * 5000);
   const powerSliderIndex = Math.max(0, tariffs.findIndex((tariff) => tariff.power === power));
   const schedulesCustomized = offPeakWindows.length !== DEFAULT_HC_WINDOWS.length || offPeakWindows.some((window, index) => window.start !== DEFAULT_HC_WINDOWS[index]?.start || window.end !== DEFAULT_HC_WINDOWS[index]?.end);
+  const hphcEstimateMin = Math.min(results.lowEstimate.hphcCost, results.highEstimate.hphcCost);
+  const hphcEstimateMax = Math.max(results.lowEstimate.hphcCost, results.highEstimate.hphcCost);
+  const breakEvenText = results.breakEven.status === "above"
+    ? <>HP/HC devient intéressant à partir d’environ <b>{results.breakEven.share.toFixed(0)} %</b> de consommation en heures creuses.</>
+    : results.breakEven.status === "below"
+      ? <>Avec cette grille atypique, HP/HC n’est intéressant qu’en dessous d’environ <b>{results.breakEven.share.toFixed(0)} %</b> en heures creuses.</>
+      : results.breakEven.status === "always"
+        ? <>HP/HC est avantageux quelle que soit la répartition HP/HC.</>
+        : results.breakEven.status === "never"
+          ? <>HP/HC ne devient pas avantageux, même avec 100 % de consommation en heures creuses.</>
+          : <>Les deux options ont le même coût quelle que soit la répartition HP/HC.</>;
 
   return (
     <main>
@@ -528,7 +544,7 @@ export default function Home() {
                   <span><small>CHAUFFAGE ESTIMÉ</small><strong>{number.format(heatingEstimate.annualKwh)} kWh/an</strong><em>fourchette {number.format(heatingEstimate.lowKwh)}–{number.format(heatingEstimate.highKwh)} kWh</em></span>
                   <span><small>PART EN HEURES CREUSES</small><strong>{heatingEstimate.hcShare.toFixed(0)} %</strong><em>{number.format(results.heatingHcKwh)} kWh/an en HC</em></span>
                 </div>
-                <p className="heating-note">Profil standardisé : 19 °C en confort, 17 °C la nuit et pendant les absences. Estimation pédagogique H3 à affiner avec les <a href="https://www.data.corsica/explore/dataset/dpe-logements-existants-en-corse-depuis-juillet-2021/" target="_blank" rel="noreferrer">DPE corses</a>.</p>
+                <p className="heating-note">Profil standardisé : 19 °C en confort, 17 °C la nuit et pendant les absences. Sans chauffage à accumulation déclaré, seuls les besoins ayant naturellement lieu pendant la plage HC sont comptés en heures creuses. Estimation pédagogique H3 à affiner avec les <a href="https://www.data.corsica/explore/dataset/dpe-logements-existants-en-corse-depuis-juillet-2021/" target="_blank" rel="noreferrer">DPE corses</a>.</p>
               </>}
             </section>
             <label className="range-label"><span>Répartition totale en heures creuses <strong>{results.share.toFixed(0)} %</strong></span><ThumbOnlyRange aria-label="Répartition totale en heures creuses" min={results.minShare} max={results.maxShare} step={1} value={results.share} disabled={results.backgroundKwh <= 0} onValueChange={setTotalHcShare} /></label>
@@ -538,7 +554,7 @@ export default function Home() {
 
           <section className="panel appliance-panel">
             <div className="step-heading"><span>02</span><div><p>USAGES FLEXIBLES</p><h2>À vous de les décaler</h2></div></div>
-            <div className="behavior-guide"><span><strong>Courbe adaptée au foyer</strong>Les usages liés au ménage évoluent avec {residents} habitant{residents > 1 ? "s" : ""} et les kWh annuels. Le chauffage est estimé séparément.</span><div className="usage-balance"><b>{number.format(results.declaredApplianceKwh)} kWh</b><small>usages listés</small><b>{number.format(results.backgroundKwh)} kWh</b><small>reste du foyer</small></div></div>
+            <div className="behavior-guide"><span><strong>Courbe adaptée au foyer</strong>Les usages liés au ménage évoluent avec {residents} habitant{residents > 1 ? "s" : ""} et la consommation annuelle par habitant. Le chauffage est estimé séparément.</span><div className="usage-balance"><b>{number.format(results.declaredApplianceKwh)} kWh</b><small>usages listés</small><b>{number.format(results.backgroundKwh)} kWh</b><small>reste du foyer</small></div></div>
             <div className="appliance-list">{appliances.map((appliance) => {
               const calibration = getApplianceCalibration(appliance.type);
               return <article className="appliance" key={appliance.id}>
@@ -554,7 +570,7 @@ export default function Home() {
                   <label>Estimation haute<div className="compact-input"><NumericInput min={appliance.annualKwh} step={10} disabled={appliance.calculationMode === "measured"} value={Math.round(appliance.highKwh)} onValueChange={(value) => updateAppliance(appliance.id, { highKwh: Math.max(appliance.annualKwh, value) })} /><span>kWh</span></div></label>
                 </div>
                 <p className="offpeak-assumption"><strong>Placement retenu :</strong> 100 % de cet usage opportuniste pendant les heures creuses.</p>
-                {calibration && <p className={`calibration-status ${calibration.confidence}`}><strong>Fiabilité {confidenceLabel(calibration.confidence)}</strong>{calibration.sampleSize > 0 ? <>Échantillon : {calibration.sampleSize} logements · coefficient foyer {calibration.descriptiveExponent.toFixed(2)} (intervalle 95 % : {calibration.descriptiveExponentCi95[0].toFixed(2)}–{calibration.descriptiveExponentCi95[1].toFixed(2)}).</> : <>Aucune voiture électrique exploitable dans le fichier ouvert.</>} {!calibration.residentCalibrated && calibration.residentExponent > 0 && <em>La correction selon les habitants reste indicative.</em>}</p>}
+                {calibration && <p className={`calibration-status ${calibration.confidence}`}><strong>Fiabilité {confidenceLabel(calibration.confidence)}</strong>{calibration.sampleSize > 0 ? <>Échantillon : {calibration.sampleSize} logements · coefficient foyer appliqué {calibration.householdExponent.toFixed(2)} (intervalle 95 % : {calibration.householdExponentCi95[0].toFixed(2)}–{calibration.householdExponentCi95[1].toFixed(2)}).</> : <>Aucune voiture électrique exploitable dans le fichier ouvert.</>} {!calibration.residentCalibrated && calibration.residentExponent > 0 && <em>La correction selon les habitants reste indicative.</em>}</p>}
                 <p className={`appliance-source ${appliance.source.kind}`}>Source : <strong>{appliance.source.organization}</strong> — {appliance.source.label}{appliance.source.year ? ` (${appliance.source.year})` : ""}{appliance.source.url && <> · <a href={appliance.source.url} target="_blank" rel="noreferrer">consulter</a></>}</p>
               </details>
             </article>})}</div>
@@ -581,10 +597,10 @@ export default function Home() {
           <div className="cost-lines">
             <p>FACTURE EDF ANNUELLE ESTIMÉE · TTC</p>
             <article><span><strong>Option Base</strong><small>Abonnement {preciseEuros.format(results.baseSubscriptionCost)} + énergie {preciseEuros.format(results.baseEnergyCost)}</small></span><span className="cost-total"><strong>{preciseEuros.format(results.baseCost)}</strong><small>{preciseEuros.format(results.baseCost / 12)} / mois</small></span></article>
-            <article className="highlight"><span><strong>Option HP / HC</strong><small>Abonnement {preciseEuros.format(results.hphcSubscriptionCost)} + HP {preciseEuros.format(results.hpEnergyCost)} + HC {preciseEuros.format(results.hcEnergyCost)}</small></span><span className="cost-total"><strong>{preciseEuros.format(results.hphcCost)}</strong><small>{preciseEuros.format(results.hphcCost / 12)} / mois</small></span></article>
+            <article className="highlight"><span><strong>Option HP / HC</strong><small>Abonnement {preciseEuros.format(results.hphcSubscriptionCost)} + HP {preciseEuros.format(results.hpEnergyCost)} + HC {preciseEuros.format(results.hcEnergyCost)}</small><small>Scénarios bas/haut : {preciseEuros.format(hphcEstimateMin)}–{preciseEuros.format(hphcEstimateMax)} / an</small></span><span className="cost-total"><strong>{preciseEuros.format(results.hphcCost)}</strong><small>{preciseEuros.format(results.hphcCost / 12)} / mois</small></span></article>
           </div>
           <div className="distribution"><div className="distribution-title"><span>Répartition HP / HC<small>Plage compteur : {formatTime(activeOffPeakWindow.start)}–{formatTime(activeOffPeakWindow.end)}</small></span><strong>{results.share.toFixed(0)} % en HC</strong></div><div className="bar"><span style={{ width: `${results.share}%` }} /></div><div className="bar-legend"><span>☀ HP · {number.format(results.hpKwh)} kWh</span><span>☾ HC · {number.format(results.hcKwh)} kWh</span></div><div className="energy-breakdown"><span>Usages listés<strong>{number.format(results.declaredApplianceKwh)} kWh</strong></span><span>Chauffage<strong>{number.format(results.heatingKwh)} kWh</strong></span><span>Chauffage en HC<strong>{number.format(results.heatingHcKwh)} kWh</strong></span><span>Appareils en HC<strong>{number.format(results.scheduledHc)} kWh</strong></span></div></div>
-          <div className="threshold"><span className="threshold-icon">◎</span><p><strong>Votre point d’équilibre</strong><br />HP/HC devient intéressant à partir d’environ <b>{results.threshold.toFixed(0)} %</b> de consommation en heures creuses.</p></div>
+          <div className="threshold"><span className="threshold-icon">◎</span><p><strong>Votre point d’équilibre</strong><br />{breakEvenText}</p></div>
           <p className="disclaimer"><strong>Total inclus :</strong> abonnement, énergie et taxes déjà intégrées aux tarifs TTC EDF Corse. Non inclus : services ou remises propres au contrat, régularisations et changements de tarif au cours des 12 mois. Comparez l’estimation à une facture réelle avant toute décision contractuelle.</p>
         </aside>
       </section>
@@ -598,14 +614,14 @@ export default function Home() {
           {scheduleEditorOpen && <div className="hc-editor">
             {offPeakWindows.map((window, index) => <div className="hc-editor-row" key={window.id}>
               <span>Plage {index + 1}</span>
-              <label>Début<input aria-label={`Début de la plage ${index + 1}`} type="time" value={window.start} onChange={(event) => { if (validTime(event.target.value)) updateOffPeakWindow(window.id, { start: event.target.value }); }} /></label>
+              <label>Début<input aria-label={`Début de la plage ${index + 1}`} type="time" value={window.start} onChange={(event) => { if (validTime(event.target.value)) updateOffPeakWindow(window.id, "start", event.target.value); }} /></label>
               <b>→</b>
-              <label>Fin<input aria-label={`Fin de la plage ${index + 1}`} type="time" value={window.end} onChange={(event) => { if (validTime(event.target.value)) updateOffPeakWindow(window.id, { end: event.target.value }); }} /></label>
-              <small className={offPeakDuration(window) === 480 ? "valid" : ""}>{formatDuration(offPeakDuration(window))}</small>
+              <label>Fin<input aria-label={`Fin de la plage ${index + 1}`} type="time" value={window.end} onChange={(event) => { if (validTime(event.target.value)) updateOffPeakWindow(window.id, "end", event.target.value); }} /></label>
+              <small className={offPeakDurationMinutes(window) === 480 ? "valid" : ""}>{formatDuration(offPeakDurationMinutes(window))}</small>
               <button className="remove-window" type="button" aria-label={`Supprimer la plage ${index + 1}`} disabled={offPeakWindows.length === 1} onClick={() => setOffPeakWindows((current) => current.filter((item) => item.id !== window.id))}>×</button>
             </div>)}
             <div className="hc-editor-actions"><button type="button" disabled={offPeakWindows.length >= 8} onClick={addOffPeakWindow}>＋ Ajouter une plage</button><button type="button" onClick={() => { setOffPeakWindows(DEFAULT_HC_WINDOWS); setActiveOffPeakWindowId(DEFAULT_HC_WINDOWS[0].id); }}>↺ Horaires EDF</button></div>
-            <p>Une plage officielle dure 8 h. Les modifications mettent immédiatement à jour le graphique et restent enregistrées sur cet appareil.</p>
+            <p>Une plage officielle dure 8 h : modifier une borne décale automatiquement l’autre. Les changements mettent immédiatement à jour le graphique et restent enregistrés sur cet appareil.</p>
           </div>}
           <div className="timeline-hours"><span>00h</span><span>06h</span><span>12h</span><span>18h</span><span>24h</span></div>
           <div className="hc-windows" aria-label="Plages d’heures creuses affichées">

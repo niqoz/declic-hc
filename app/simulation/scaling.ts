@@ -15,8 +15,14 @@ const safeResidents = (value: number) => Math.max(1, Number.isFinite(value) ? va
 export function householdScaleFactor(type: string, from: HouseholdContext, to: HouseholdContext) {
   const calibration = getApplianceCalibration(type);
   if (!calibration || calibration.confidence === "insufficient") return 1;
-  const annualFactor = Math.pow(safeAnnualKwh(to.annualKwh) / safeAnnualKwh(from.annualKwh), calibration.householdExponent);
-  const residentFactor = Math.pow(safeResidents(to.residents) / safeResidents(from.residents), calibration.residentExponent);
+  const fromResidents = safeResidents(from.residents);
+  const toResidents = safeResidents(to.residents);
+  // La consommation par habitant sépare l'effet de taille énergétique de
+  // l'effet démographique et évite de compter deux fois la croissance du foyer.
+  const fromKwhPerResident = safeAnnualKwh(from.annualKwh) / fromResidents;
+  const toKwhPerResident = safeAnnualKwh(to.annualKwh) / toResidents;
+  const annualFactor = Math.pow(toKwhPerResident / fromKwhPerResident, calibration.householdExponent);
+  const residentFactor = Math.pow(toResidents / fromResidents, calibration.residentExponent);
   return annualFactor * residentFactor;
 }
 

@@ -102,6 +102,15 @@ export type EnergyDistribution = {
   applianceScale: number;
 };
 
+export type BreakEvenResult =
+  | { status: "above" | "below"; share: number }
+  | { status: "always" | "never" | "equal"; share: null };
+
+export type SimulationEstimate = EnergyDistribution & {
+  hphcCost: number;
+  delta: number;
+};
+
 export type SimulationResult = EnergyDistribution & {
   baseSubscriptionCost: number;
   baseEnergyCost: number;
@@ -111,7 +120,9 @@ export type SimulationResult = EnergyDistribution & {
   baseCost: number;
   hphcCost: number;
   delta: number;
-  threshold: number;
+  breakEven: BreakEvenResult;
+  lowEstimate: SimulationEstimate;
+  highEstimate: SimulationEstimate;
   warnings: SimulationWarning[];
 };
 

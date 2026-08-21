@@ -10,7 +10,12 @@ import {
 } from "../.test-dist/calculate.js";
 import { APPLIANCE_PRESETS, DEFAULT_APPLIANCES } from "../.test-dist/presets.js";
 import { ELECDOM_DATA_QUALITY, getApplianceCalibration } from "../.test-dist/calibration.js";
-import { estimateHeating } from "../.test-dist/heating.js";
+import {
+  estimateHeating,
+  isValidOffPeakWindow,
+  offPeakDurationMinutes,
+  updateOffPeakWindowTime,
+} from "../.test-dist/heating.js";
 import { householdScaleFactor, scaleAppliancesForHousehold } from "../.test-dist/scaling.js";
 import {
   CURRENT_STATE_VERSION,
@@ -26,6 +31,7 @@ import {
   loadProfilesStore,
   migrateFromLegacyState,
   parseProfileJson,
+  PROFILES_STORE_VERSION,
   removeProfile,
   renameProfile,
   saveProfilesStore,
@@ -92,7 +98,8 @@ test("reproduit le scénario central de l'interface", () => {
   closeTo(result.hpEnergyCost, 439.9851);
   closeTo(result.hcEnergyCost, 329.245575);
   closeTo(result.delta, 56.069325);
-  closeTo(result.threshold, 25.64102564102564);
+  assert.equal(result.breakEven.status, "above");
+  closeTo(result.breakEven.share, 25.64102564102564);
   assert.deepEqual(result.warnings, []);
 });
 
@@ -111,17 +118,17 @@ test("estime séparément le chauffage selon la surface, le système et l'occupa
   assert.ok(radiators.hcShare > 0 && radiators.hcShare < 100);
 });
 
-test("concentre le chauffage en HC quand le foyer est absent en journée", () => {
+test("ne place en HC que le chauffage ayant naturellement lieu dans la plage", () => {
   const window = { id: 1, start: "21:40", end: "05:40" };
   const base = { ...defaultState.heating, enabled: true, surfaceM2: 80, system: "radiators", dwellingType: "apartment", insulation: "standard", altitude: "low" };
   const away = estimateHeating({ ...base, occupancy: "away" }, window);
   const mixed = estimateHeating({ ...base, occupancy: "mixed" }, window);
   const home = estimateHeating({ ...base, occupancy: "home" }, window);
 
-  closeTo(away.hcShare, 66.1833, 0.01);
-  closeTo(mixed.hcShare, 60.2843, 0.01);
-  closeTo(home.hcShare, 53.4736, 0.01);
-  assert.ok(away.hcShare - home.hcShare > 10, "l'écart absent→maison doit dépasser 10 points");
+  closeTo(away.hcShare, 31.0171, 0.01);
+  closeTo(mixed.hcShare, 30.1961, 0.01);
+  closeTo(home.hcShare, 29.0429, 0.01);
+  assert.ok(away.hcShare > home.hcShare);
   closeTo(away.annualKwh, 3831.81, 0.1);
   closeTo(home.annualKwh, 4092.28, 0.1);
 });
@@ -167,6 +174,14 @@ test("fait évoluer les usages liés au foyer avec les kWh et les habitants", ()
   assert.ok(raised[1].annualKwh > appliances[1].annualKwh);
   assert.ok(raised[2].annualKwh > appliances[2].annualKwh);
 
+  const waterHeaterCalibration = getApplianceCalibration("water-heater");
+  const doubledHousehold = householdScaleFactor(
+    "water-heater",
+    { annualKwh: 4500, residents: 2 },
+    { annualKwh: 9000, residents: 4 },
+  );
+  closeTo(doubledHousehold, 2 ** waterHeaterCalibration.residentExponent);
+
   const measured = scaleAppliancesForHousehold(
     [{ ...appliances[0], calculationMode: "measured", annualKwh: 1350 }],
     { annualKwh: 4500, residents: 2 },
@@ -187,9 +202,69 @@ test("gère une consommation nulle sans produire de valeur invalide", () => {
 });
 
 test("le point d'équilibre égalise les deux tarifs", () => {
-  const threshold = calculateBreakEvenShare(4500, tariff);
-  const result = calculateSimulation({ annualKwh: 4500, backgroundHcShare: threshold, tariff, appliances: [] });
+  const breakEven = calculateBreakEvenShare(4500, tariff);
+  assert.equal(breakEven.status, "above");
+  const result = calculateSimulation({ annualKwh: 4500, backgroundHcShare: breakEven.share, tariff, appliances: [] });
   closeTo(result.baseCost, result.hphcCost, 1e-9);
+});
+
+test("décrit correctement les grilles sans point d'équilibre atteignable", () => {
+  const always = calculateBreakEvenShare(1000, {
+    ...tariff,
+    baseSubscription: 200,
+    hphcSubscription: 100,
+    basePrice: 0.30,
+    hpPrice: 0.10,
+    hcPrice: 0.10,
+  });
+  const never = calculateBreakEvenShare(1000, {
+    ...tariff,
+    baseSubscription: 100,
+    hphcSubscription: 500,
+    basePrice: 0.20,
+    hpPrice: 0.25,
+    hcPrice: 0.15,
+  });
+  const below = calculateBreakEvenShare(1000, {
+    ...tariff,
+    baseSubscription: 100,
+    hphcSubscription: 100,
+    basePrice: 0.20,
+    hpPrice: 0.15,
+    hcPrice: 0.25,
+  });
+
+  assert.deepEqual(always, { status: "always", share: null });
+  assert.deepEqual(never, { status: "never", share: null });
+  assert.equal(below.status, "below");
+  closeTo(below.share, 50);
+});
+
+test("répercute les fourchettes des usages sur le coût HP/HC", () => {
+  const result = calculateSimulation({
+    annualKwh: 4500,
+    backgroundHcShare: 25,
+    tariff,
+    appliances: [{ ...appliances[0], annualKwh: 1000, lowKwh: 200, highKwh: 2000 }],
+  });
+
+  assert.ok(result.lowEstimate.hcKwh < result.hcKwh);
+  assert.ok(result.highEstimate.hcKwh > result.hcKwh);
+  assert.ok(result.lowEstimate.hphcCost > result.hphcCost);
+  assert.ok(result.highEstimate.hphcCost < result.hphcCost);
+});
+
+test("maintient des plages HC de huit heures et neutralise les plages invalides", () => {
+  const window = { id: 1, start: "21:40", end: "05:40" };
+  const movedStart = updateOffPeakWindowTime(window, "start", "23:15");
+  const movedEnd = updateOffPeakWindowTime(window, "end", "04:30");
+
+  assert.deepEqual(movedStart, { id: 1, start: "23:15", end: "07:15" });
+  assert.deepEqual(movedEnd, { id: 1, start: "20:30", end: "04:30" });
+  assert.equal(offPeakDurationMinutes(movedStart), 480);
+  assert.equal(offPeakDurationMinutes(movedEnd), 480);
+  assert.equal(isValidOffPeakWindow({ id: 2, start: "22:00", end: "22:00" }), false);
+  assert.equal(estimateHeating({ ...defaultState.heating, enabled: true }, { id: 2, start: "22:00", end: "22:00" }).hcShare, 0);
 });
 
 test("sauvegarde une version explicite et recharge le même état", () => {
@@ -290,7 +365,7 @@ test("migre l'ancienne sauvegarde vers un profil nommé", () => {
   assert.ok(!values.has(STATE_STORAGE_KEY));
 });
 
-test("ne migre pas si des profils existent déjà", () => {
+test("met à niveau le magasin de profils sans recréer le profil existant", () => {
   const values = new Map();
   const storage = {
     getItem: (key) => values.get(key) ?? null,
@@ -303,6 +378,7 @@ test("ne migre pas si des profils existent déjà", () => {
   saveProfilesStore(storage, preStore);
 
   const store = migrateFromLegacyState(storage, defaultState, APPLIANCE_PRESETS);
+  assert.equal(store.version, PROFILES_STORE_VERSION);
   assert.equal(store.profiles.length, 1);
   assert.equal(store.profiles[0].name, "Déjà là");
   assert.equal(store.profiles[0].state.annualKwh, 9999);
@@ -310,7 +386,7 @@ test("ne migre pas si des profils existent déjà", () => {
 
 test("ajoute, renomme et supprime des profils", () => {
   const stateInput = defaultStateInput;
-  const empty = { version: 1, profiles: [], activeProfileId: null };
+  const empty = { version: PROFILES_STORE_VERSION, profiles: [], activeProfileId: null };
 
   const { store: withFirst, profile: first } = addProfile(empty, "Profil A", stateInput);
   assert.equal(withFirst.profiles.length, 1);
@@ -330,7 +406,7 @@ test("ajoute, renomme et supprime des profils", () => {
 
 test("bascule le profil actif et met à jour l'état", () => {
   const stateInput = defaultStateInput;
-  const empty = { version: 1, profiles: [], activeProfileId: null };
+  const empty = { version: PROFILES_STORE_VERSION, profiles: [], activeProfileId: null };
   const { store: withTwo, profile: second } = addProfile(
     addProfile(empty, "A", stateInput).store,
     "B",
@@ -364,7 +440,7 @@ test("rejette un fichier JSON invalide à l'import", () => {
 
 test("met à jour l'état d'un profil existant via upsert", () => {
   const stateInput = defaultStateInput;
-  const { store, profile } = addProfile({ version: 1, profiles: [], activeProfileId: null }, "Up", stateInput);
+  const { store, profile } = addProfile({ version: PROFILES_STORE_VERSION, profiles: [], activeProfileId: null }, "Up", stateInput);
   const updated = upsertProfile(store, profile.id, { ...stateInput, annualKwh: 12345 });
   assert.equal(updated.profiles[0].state.annualKwh, 12345);
   assert.equal(updated.profiles[0].name, profile.name);
@@ -378,7 +454,7 @@ test("sauvegarde et recharge un store de profils", () => {
     removeItem: () => {},
   };
   const stateInput = defaultStateInput;
-  const { store } = addProfile({ version: 1, profiles: [], activeProfileId: null }, "Persist", stateInput);
+  const { store } = addProfile({ version: PROFILES_STORE_VERSION, profiles: [], activeProfileId: null }, "Persist", stateInput);
   saveProfilesStore(storage, store);
 
   const reloaded = loadProfilesStore(storage);
@@ -398,7 +474,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.7.1");
+  assert.equal(version, "0.8.0");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);

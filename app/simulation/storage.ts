@@ -1,4 +1,5 @@
 import { clamp } from "./calculate.js";
+import { isValidOffPeakWindow } from "./heating.js";
 import { INTERNAL_ESTIMATE_SOURCE } from "./presets.js";
 import { REFERENCE_RESIDENTS, scaleApplianceForHousehold } from "./scaling.js";
 import type {
@@ -16,7 +17,7 @@ import type {
 } from "./types.js";
 
 export const STATE_STORAGE_KEY = "hphc-simulator-state";
-export const CURRENT_STATE_VERSION = 6;
+export const CURRENT_STATE_VERSION = 7;
 
 type StorageReader = Pick<Storage, "getItem">;
 type StorageWriter = Pick<Storage, "setItem">;
@@ -187,12 +188,13 @@ function migrateWindows(value: unknown, fallback: OffPeakWindow[]) {
   const windows = value.flatMap((candidate, index) => {
     if (!candidate || typeof candidate !== "object") return [];
     const window = candidate as Partial<OffPeakWindow>;
-    if (!validTime(window.start) || !validTime(window.end) || window.start === window.end) return [];
-    return [{
+    if (!validTime(window.start) || !validTime(window.end)) return [];
+    const migrated = {
       id: Number.isFinite(window.id) ? Number(window.id) : index + 1,
       start: window.start,
       end: window.end,
-    }];
+    };
+    return isValidOffPeakWindow(migrated) ? [migrated] : [];
   });
   return windows.length ? windows : fallback.map((window) => ({ ...window }));
 }

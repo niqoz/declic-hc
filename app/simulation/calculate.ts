@@ -1,7 +1,10 @@
 import type {
   Appliance,
+  BreakEvenResult,
   EnergyDistribution,
+  HeatingEstimate,
   SimulationInput,
+  SimulationEstimate,
   SimulationResult,
   SimulationWarning,
   Tariff,
@@ -77,16 +80,29 @@ export function calculateHphcCost(hpKwh: number, hcKwh: number, tariff: Tariff) 
     + nonNegative(hcKwh) * nonNegative(tariff.hcPrice);
 }
 
-export function calculateBreakEvenShare(annualKwh: number, tariff: Tariff) {
+export function calculateBreakEvenShare(annualKwh: number, tariff: Tariff): BreakEvenResult {
   const safeAnnualKwh = nonNegative(annualKwh);
-  const denominator = nonNegative(tariff.hpPrice) - nonNegative(tariff.hcPrice);
-  if (denominator <= 0) return 100;
-  const threshold = (
-    (nonNegative(tariff.hpPrice) - nonNegative(tariff.basePrice)) * safeAnnualKwh
-    + nonNegative(tariff.hphcSubscription)
-    - nonNegative(tariff.baseSubscription)
-  ) / (denominator * Math.max(1, safeAnnualKwh)) * 100;
-  return clamp(threshold, 0, 100);
+  const baseCost = calculateBaseCost(safeAnnualKwh, tariff);
+  const hphcAtZero = calculateHphcCost(safeAnnualKwh, 0, tariff);
+  const deltaAtZero = baseCost - hphcAtZero;
+  const slope = (nonNegative(tariff.hpPrice) - nonNegative(tariff.hcPrice)) * safeAnnualKwh;
+  const epsilon = 1e-9;
+
+  if (Math.abs(slope) <= epsilon) {
+    if (Math.abs(deltaAtZero) <= epsilon) return { status: "equal", share: null };
+    return { status: deltaAtZero > 0 ? "always" : "never", share: null };
+  }
+
+  const deltaAtFull = deltaAtZero + slope;
+  if (slope > 0) {
+    if (deltaAtZero > epsilon) return { status: "always", share: null };
+    if (deltaAtFull < -epsilon) return { status: "never", share: null };
+    return { status: "above", share: clamp(-deltaAtZero / slope * 100, 0, 100) };
+  }
+
+  if (deltaAtZero < -epsilon) return { status: "never", share: null };
+  if (deltaAtFull > epsilon) return { status: "always", share: null };
+  return { status: "below", share: clamp(-deltaAtZero / slope * 100, 0, 100) };
 }
 
 export function validateSimulationInput(input: SimulationInput, declaredModeledKwh?: number): SimulationWarning[] {
@@ -122,6 +138,16 @@ export function validateSimulationInput(input: SimulationInput, declaredModeledK
       });
     }
   }
+  if ((input.heating?.hcShare ?? 0) > 100
+    || input.appliances.some((appliance) => appliance.lowKwh > appliance.annualKwh || appliance.highKwh < appliance.annualKwh)
+    || (input.heating != null && (input.heating.lowKwh > input.heating.annualKwh || input.heating.highKwh < input.heating.annualKwh))) {
+    if (!warnings.some((warning) => warning.code === "INVALID_INPUT")) {
+      warnings.push({
+        code: "INVALID_INPUT",
+        message: "Les proportions et fourchettes invalides ont été bornées pour effectuer la simulation.",
+      });
+    }
+  }
   if (input.tariff.hcPrice > input.tariff.hpPrice) {
     warnings.push({
       code: "UNUSUAL_TARIFF",
@@ -147,6 +173,27 @@ export function calculateSimulation(input: SimulationInput): SimulationResult {
   const baseCost = baseSubscriptionCost + baseEnergyCost;
   const hphcCost = hphcSubscriptionCost + hpEnergyCost + hcEnergyCost;
   const warnings = validateSimulationInput(input, distribution.declaredApplianceKwh + distribution.declaredHeatingKwh);
+  const estimate = (appliances: Appliance[], heating?: HeatingEstimate): SimulationEstimate => {
+    const variant = calculateEnergyDistribution(input.annualKwh, input.backgroundHcShare, appliances, heating);
+    const variantHphcCost = calculateHphcCost(variant.hpKwh, variant.hcKwh, input.tariff);
+    return { ...variant, hphcCost: variantHphcCost, delta: baseCost - variantHphcCost };
+  };
+  const lowAppliances = input.appliances.map((appliance) => ({
+    ...appliance,
+    annualKwh: Math.min(nonNegative(appliance.annualKwh), nonNegative(appliance.lowKwh)),
+  }));
+  const highAppliances = input.appliances.map((appliance) => ({
+    ...appliance,
+    annualKwh: Math.max(nonNegative(appliance.annualKwh), nonNegative(appliance.highKwh)),
+  }));
+  const lowHeating = input.heating ? {
+    ...input.heating,
+    annualKwh: Math.min(nonNegative(input.heating.annualKwh), nonNegative(input.heating.lowKwh)),
+  } : undefined;
+  const highHeating = input.heating ? {
+    ...input.heating,
+    annualKwh: Math.max(nonNegative(input.heating.annualKwh), nonNegative(input.heating.highKwh)),
+  } : undefined;
 
   return {
     ...distribution,
@@ -158,7 +205,9 @@ export function calculateSimulation(input: SimulationInput): SimulationResult {
     baseCost,
     hphcCost,
     delta: baseCost - hphcCost,
-    threshold: calculateBreakEvenShare(input.annualKwh, input.tariff),
+    breakEven: calculateBreakEvenShare(input.annualKwh, input.tariff),
+    lowEstimate: estimate(lowAppliances, lowHeating),
+    highEstimate: estimate(highAppliances, highHeating),
     warnings,
   };
 }

@@ -14,7 +14,26 @@ const timeToMinutes = (value: string) => {
   return hours * 60 + minutes;
 };
 
+const minutesToTime = (value: number) => {
+  const normalized = (value % 1440 + 1440) % 1440;
+  return `${String(Math.floor(normalized / 60)).padStart(2, "0")}:${String(normalized % 60).padStart(2, "0")}`;
+};
+
+export const offPeakDurationMinutes = ({ start, end }: OffPeakWindow) => (
+  timeToMinutes(end) - timeToMinutes(start) + 1440
+) % 1440;
+
+export const isValidOffPeakWindow = (window: OffPeakWindow) => offPeakDurationMinutes(window) === 8 * 60;
+
+export function updateOffPeakWindowTime(window: OffPeakWindow, field: "start" | "end", value: string): OffPeakWindow {
+  const minute = timeToMinutes(value);
+  return field === "start"
+    ? { ...window, start: value, end: minutesToTime(minute + 8 * 60) }
+    : { ...window, start: minutesToTime(minute - 8 * 60), end: value };
+}
+
 const isOffPeak = (minute: number, window: OffPeakWindow) => {
+  if (!isValidOffPeakWindow(window)) return false;
   const start = timeToMinutes(window.start);
   const end = timeToMinutes(window.end);
   return start < end ? minute >= start && minute < end : minute >= start || minute < end;
@@ -30,12 +49,6 @@ const isComfortPeriod = (profile: OccupancyProfile, weekday: number, minute: num
 };
 
 function computeHeatingDemand(profile: OccupancyProfile, window: OffPeakWindow) {
-  const shiftableFraction: Record<OccupancyProfile, number> = {
-    away: 0.80,
-    mixed: 0.55,
-    home: 0.35,
-  };
-  const shift = shiftableFraction[profile];
   let comfortPeak = 0;
   let comfortOffPeak = 0;
   let ecoOffPeak = 0;
@@ -52,7 +65,9 @@ function computeHeatingDemand(profile: OccupancyProfile, window: OffPeakWindow) 
     }
   }
   const total = comfortPeak + comfortOffPeak + ecoPeak + ecoOffPeak;
-  const offPeak = comfortOffPeak + comfortPeak * shift + ecoOffPeak;
+  // Sans équipement d'accumulation déclaré, le chauffage n'est compté en HC
+  // que lorsqu'il fonctionne naturellement pendant la plage tarifaire.
+  const offPeak = comfortOffPeak + ecoOffPeak;
   return { total, offPeak };
 }
 

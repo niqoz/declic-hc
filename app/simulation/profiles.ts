@@ -1,4 +1,4 @@
-import { loadSimulationState, STATE_STORAGE_KEY } from "./storage.js";
+import { CURRENT_STATE_VERSION, loadSimulationState, migrateSimulationState, STATE_STORAGE_KEY } from "./storage.js";
 import type {
   AppliancePreset,
   ProfilesStore,
@@ -8,7 +8,7 @@ import type {
 } from "./types.js";
 
 export const PROFILES_STORAGE_KEY = "hphc-profiles";
-export const PROFILES_STORE_VERSION = 1;
+export const PROFILES_STORE_VERSION = 2;
 const DEFAULT_PROFILE_NAME = "Ma simulation";
 
 type StorageReader = Pick<Storage, "getItem">;
@@ -43,6 +43,20 @@ function deepCloneState(state: SimulatorStateInput): SimulatorStateInput {
   };
 }
 
+function stateInputFromState(state: SimulatorState): SimulatorStateInput {
+  return {
+    tariffs: state.tariffs,
+    power: state.power,
+    annualKwh: state.annualKwh,
+    residents: state.residents,
+    backgroundHcShare: state.backgroundHcShare,
+    appliances: state.appliances,
+    heating: state.heating,
+    offPeakWindows: state.offPeakWindows,
+    activeOffPeakWindowId: state.activeOffPeakWindowId,
+  };
+}
+
 function isValidProfile(value: unknown): value is SavedProfile {
   if (!value || typeof value !== "object") return false;
   const profile = value as Record<string, unknown>;
@@ -68,7 +82,8 @@ export function loadProfilesStore(storage: StorageReader): ProfilesStore {
     const activeProfileId = profiles.some((profile) => profile.id === parsed.activeProfileId)
       ? parsed.activeProfileId ?? null
       : (profiles[0]?.id ?? null);
-    return { version: PROFILES_STORE_VERSION, profiles, activeProfileId };
+    const version = Number.isFinite(parsed.version) ? Number(parsed.version) : 1;
+    return { version, profiles, activeProfileId };
   } catch {
     return emptyStore();
   }
@@ -84,22 +99,25 @@ export function migrateFromLegacyState(
   presets: AppliancePreset[],
 ): ProfilesStore {
   const store = loadProfilesStore(storage);
-  if (store.profiles.length > 0) return store;
+  if (store.profiles.length > 0) {
+    if (store.version >= PROFILES_STORE_VERSION) return store;
+    const profiles = store.profiles.map((profile) => {
+      const migrated = migrateSimulationState(
+        { ...profile.state, version: CURRENT_STATE_VERSION - 1 },
+        defaults,
+        presets,
+      );
+      return { ...profile, state: stateInputFromState(migrated), updatedAt: new Date().toISOString() };
+    });
+    const upgraded = { ...store, version: PROFILES_STORE_VERSION, profiles };
+    saveProfilesStore(storage, upgraded);
+    return upgraded;
+  }
   try {
     const legacyRaw = storage.getItem(STATE_STORAGE_KEY);
     if (!legacyRaw) return store;
     const migrated = loadSimulationState(storage, defaults, presets);
-    const stateInput: SimulatorStateInput = {
-      tariffs: migrated.tariffs,
-      power: migrated.power,
-      annualKwh: migrated.annualKwh,
-      residents: migrated.residents,
-      backgroundHcShare: migrated.backgroundHcShare,
-      appliances: migrated.appliances,
-      heating: migrated.heating,
-      offPeakWindows: migrated.offPeakWindows,
-      activeOffPeakWindowId: migrated.activeOffPeakWindowId,
-    };
+    const stateInput = stateInputFromState(migrated);
     const profile = createSavedProfile(DEFAULT_PROFILE_NAME, stateInput);
     const next: ProfilesStore = { version: PROFILES_STORE_VERSION, profiles: [profile], activeProfileId: profile.id };
     saveProfilesStore(storage, next);
