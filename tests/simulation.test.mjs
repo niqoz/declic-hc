@@ -214,12 +214,15 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.4.3");
+  assert.equal(version, "0.4.4");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);
   assert.match(pageSource, /suppressNativeInput\.current/);
   assert.match(pageSource, /setPointerCapture\(event\.pointerId\)/);
+  assert.match(pageSource, /TOUJOURS PROGRAMMÉ EN HC/);
+  assert.doesNotMatch(pageSource, /schedule scheduled[^>]*>.*<i aria-hidden="true"/);
+  assert.match(pageSource, /<strong>Ajuster le modèle<\/strong>/);
   assert.match(pageSource, /v\{APP_VERSION\}/);
   assert.equal(JSON.parse(manifestSource).version, version);
   assert.match(serviceWorkerSource, new RegExp(`declic-hc-v${version?.replaceAll(".", "\\.")}`));
