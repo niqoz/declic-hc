@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, InputHTMLAttributes, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, InputHTMLAttributes, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   calculateSimulation,
   clamp,
@@ -77,6 +77,14 @@ const offPeakSegments = ({ start, end }: OffPeakWindow) => {
   if (startMinutes === endMinutes) return [];
   if (startMinutes < endMinutes) return [{ left: startMinutes / 14.4, width: (endMinutes - startMinutes) / 14.4 }];
   return [{ left: 0, width: endMinutes / 14.4 }, { left: startMinutes / 14.4, width: (1440 - startMinutes) / 14.4 }];
+};
+
+const prepareRangeInteraction = (event: ReactPointerEvent<HTMLInputElement>) => {
+  const activeElement = document.activeElement;
+  if (activeElement instanceof HTMLInputElement && activeElement.type === "number") {
+    activeElement.blur();
+  }
+  event.currentTarget.focus({ preventScroll: true });
 };
 
 const DEFAULT_SIMULATOR_STATE: SimulatorState = {
@@ -375,10 +383,10 @@ export default function Home() {
             </div>
             <label className="annual-slider">
               <span>Ajuster la consommation <strong>{number.format(annualKwh)} kWh/an</strong></span>
-              <input aria-label="Consommation annuelle en kilowattheures" type="range" min="0" max={annualSliderMax} step="100" value={annualKwh} onInput={(e) => updateAnnualKwh(Number(e.currentTarget.value))} />
+              <input aria-label="Consommation annuelle en kilowattheures" type="range" min="0" max={annualSliderMax} step="100" value={annualKwh} onPointerDown={prepareRangeInteraction} onInput={(e) => updateAnnualKwh(Number(e.currentTarget.value))} />
               <small><span>0 kWh</span><span>{number.format(annualSliderMax)} kWh</span></small>
             </label>
-            <label className="range-label"><span>Répartition totale en heures creuses <strong>{results.share.toFixed(0)} %</strong></span><input type="range" min={results.minShare} max={results.maxShare} step="1" value={results.share} disabled={results.backgroundKwh <= 0} onInput={(e) => setTotalHcShare(Number(e.currentTarget.value))} /></label>
+            <label className="range-label"><span>Répartition totale en heures creuses <strong>{results.share.toFixed(0)} %</strong></span><input type="range" min={results.minShare} max={results.maxShare} step="1" value={results.share} disabled={results.backgroundKwh <= 0} onPointerDown={prepareRangeInteraction} onInput={(e) => setTotalHcShare(Number(e.currentTarget.value))} /></label>
             <div className="range-scale"><span>Minimum {results.minShare.toFixed(0)} %</span><span>Maximum {results.maxShare.toFixed(0)} %</span></div>
             <p className="hint">Le curseur agit sur les usages non listés. Les appareils programmés fixent les limites atteignables.</p>
           </section>
