@@ -111,6 +111,21 @@ test("estime séparément le chauffage selon la surface, le système et l'occupa
   assert.ok(radiators.hcShare > 0 && radiators.hcShare < 100);
 });
 
+test("concentre le chauffage en HC quand le foyer est absent en journée", () => {
+  const window = { id: 1, start: "21:40", end: "05:40" };
+  const base = { ...defaultState.heating, enabled: true, surfaceM2: 80, system: "radiators", dwellingType: "apartment", insulation: "standard", altitude: "low" };
+  const away = estimateHeating({ ...base, occupancy: "away" }, window);
+  const mixed = estimateHeating({ ...base, occupancy: "mixed" }, window);
+  const home = estimateHeating({ ...base, occupancy: "home" }, window);
+
+  closeTo(away.hcShare, 66.1833, 0.01);
+  closeTo(mixed.hcShare, 60.2843, 0.01);
+  closeTo(home.hcShare, 53.4736, 0.01);
+  assert.ok(away.hcShare - home.hcShare > 10, "l'écart absent→maison doit dépasser 10 points");
+  closeTo(away.annualKwh, 3831.81, 0.1);
+  closeTo(home.annualKwh, 4092.28, 0.1);
+});
+
 test("retire le chauffage du reste du foyer et conserve le bilan énergétique", () => {
   const result = calculateSimulation({
     annualKwh: 4500,
@@ -383,7 +398,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.7.0");
+  assert.equal(version, "0.7.1");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);

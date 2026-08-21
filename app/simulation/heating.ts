@@ -29,24 +29,38 @@ const isComfortPeriod = (profile: OccupancyProfile, weekday: number, minute: num
   return (minute >= 6 * 60 && minute < 8 * 60) || (minute >= 17 * 60 && minute < 23 * 60);
 };
 
-function weeklyDemand(profile: OccupancyProfile, window?: OffPeakWindow) {
-  let total = 0;
-  let offPeak = 0;
+function computeHeatingDemand(profile: OccupancyProfile, window: OffPeakWindow) {
+  const shiftableFraction: Record<OccupancyProfile, number> = {
+    away: 0.80,
+    mixed: 0.55,
+    home: 0.35,
+  };
+  const shift = shiftableFraction[profile];
+  let comfortPeak = 0;
+  let comfortOffPeak = 0;
+  let ecoOffPeak = 0;
+  let ecoPeak = 0;
   for (let weekday = 0; weekday < 7; weekday += 1) {
     for (let minute = 0; minute < 1440; minute += 10) {
-      const demand = isComfortPeriod(profile, weekday, minute) ? 1 : ECO_DEMAND_RATIO;
-      total += demand;
-      if (window && isOffPeak(minute, window)) offPeak += demand;
+      const comfort = isComfortPeriod(profile, weekday, minute);
+      const offPeak = isOffPeak(minute, window);
+      if (comfort) {
+        if (offPeak) comfortOffPeak++;
+        else comfortPeak++;
+      } else if (offPeak) ecoOffPeak += ECO_DEMAND_RATIO;
+      else ecoPeak += ECO_DEMAND_RATIO;
     }
   }
+  const total = comfortPeak + comfortOffPeak + ecoPeak + ecoOffPeak;
+  const offPeak = comfortOffPeak + comfortPeak * shift + ecoOffPeak;
   return { total, offPeak };
 }
 
 export function estimateHeating(settings: HeatingSettings, window: OffPeakWindow): HeatingEstimate {
   if (!settings.enabled) return { annualKwh: 0, lowKwh: 0, highKwh: 0, hcShare: 0 };
   const surface = clamp(settings.surfaceM2, 10, 400);
-  const profileDemand = weeklyDemand(settings.occupancy, window);
-  const referenceDemand = weeklyDemand("mixed").total;
+  const profileDemand = computeHeatingDemand(settings.occupancy, window);
+  const referenceDemand = computeHeatingDemand("mixed", window).total;
   const occupancyFactor = profileDemand.total / referenceDemand;
   const systemEfficiency = settings.system === "heat-pump" ? HEAT_PUMP_SCOP : 1;
   const annualKwh = surface
