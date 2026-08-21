@@ -35,5 +35,6 @@ Les modèles reposant sur moins de 30 logements restent marqués « fiabilité i
 ## Publication
 
 - `npm run build:pages` produit la version statique GitHub Pages dans `dist-pages`.
-- `npm run build` produit la version Vinext destinée à l’hébergement Sites.
+- Le workflow `.github/workflows/pages.yml` publie cette version sur GitHub Pages à chaque envoi sur `main`.
+- Le dépôt GitHub est l’unique cible de publication du projet.
 - Le numéro de version doit rester identique dans `app/version.ts`, `package.json`, le manifeste PWA et le cache du service worker ; un test vérifie ce contrat.
