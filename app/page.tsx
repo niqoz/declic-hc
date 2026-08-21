@@ -24,6 +24,7 @@ import type {
   SimulatorState,
   Tariff,
 } from "./simulation/types";
+import { APP_VERSION } from "./version";
 
 type InstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -291,7 +292,7 @@ export default function Home() {
   return (
     <main>
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="Déclic HC, accueil"><span className="brand-mark">⌁</span><span>Déclic <strong>HC</strong></span></a>
+        <a className="brand" href="#top" aria-label="Déclic HC, accueil"><span className="brand-mark">⌁</span><span>Déclic <strong>HC</strong><small className="version-badge">v{APP_VERSION}</small></span></a>
         <div className="top-actions"><span className="offline-badge"><i /> Fonctionne hors ligne</span><button className="button install-button" disabled={isInstalled} onClick={installApp}>{isInstalled ? "✓ Installée" : "⇩ Installer"}</button><button className="button subtle tariff-button" onClick={() => setTariffsOpen((open) => !open)}>⚙ Grille tarifaire</button></div>
       </header>
       {installHelp && <div className="install-help" role="status"><span><strong>Installer Déclic HC</strong>Sur iPhone : Partager → Sur l’écran d’accueil. Sur Android : menu ⋮ → Installer l’application.</span><button aria-label="Fermer les instructions" onClick={() => setInstallHelp(false)}>×</button></div>}
@@ -406,7 +407,7 @@ export default function Home() {
           <p className="timeline-note"><strong>Plage utilisée dans la simulation : {formatTime(activeOffPeakWindow.start)}–{formatTime(activeOffPeakWindow.end)}.</strong> Son horaire ne change pas le prix du kWh HC ; il indique quand les appareils marqués « programmés en HC » sont supposés fonctionner. Horaires proposés par défaut : <a href="https://corse.edf.fr/sites/sei_corse/files/2026-08/bleu_residentiel_corse.pdf" target="_blank" rel="noreferrer">grille EDF Corse au 1er août 2026</a>.</p>
         </div>
       </section>
-      <footer><span>Déclic HC · outil indépendant de sensibilisation</span><span>Données enregistrées uniquement sur cet appareil</span></footer>
+      <footer><span>Déclic HC · v{APP_VERSION} · outil indépendant de sensibilisation</span><span>Données enregistrées uniquement sur cet appareil</span></footer>
     </main>
   );
 }

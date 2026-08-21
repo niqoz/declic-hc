@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -172,4 +173,24 @@ test("revient aux valeurs par défaut lorsque la sauvegarde est corrompue", () =
   assert.deepEqual(state, defaultState);
   assert.notEqual(state.appliances, defaultState.appliances);
   assert.notEqual(state.appliances[0].source, defaultState.appliances[0].source);
+});
+
+test("utilise le même numéro de version dans la PWA, le cache et le paquet", async () => {
+  const [versionSource, pageSource, manifestSource, serviceWorkerSource, packageSource, lockSource] = await Promise.all([
+    readFile(new URL("../app/version.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
+    readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
+    readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../package-lock.json", import.meta.url), "utf8"),
+  ]);
+  const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
+
+  assert.equal(version, "0.2.0");
+  assert.match(pageSource, /v\{APP_VERSION\}/);
+  assert.equal(JSON.parse(manifestSource).version, version);
+  assert.match(serviceWorkerSource, new RegExp(`declic-hc-v${version?.replaceAll(".", "\\.")}`));
+  assert.equal(JSON.parse(packageSource).version, version);
+  assert.equal(JSON.parse(lockSource).version, version);
+  assert.equal(JSON.parse(lockSource).packages[""].version, version);
 });

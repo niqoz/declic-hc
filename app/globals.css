@@ -11,6 +11,7 @@ main { min-height:100vh; overflow:hidden; }
 .topbar { height:76px; max-width:1240px; margin:auto; padding:0 28px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid rgba(23,59,53,.18); }
 .brand { display:flex; gap:10px; align-items:center; color:var(--ink); text-decoration:none; font-size:21px; letter-spacing:-.5px; }
 .brand-mark { display:grid; place-items:center; width:34px; height:34px; border-radius:50%; color:var(--cream); background:var(--ink); font-size:25px; font-weight:800; }
+.version-badge { display:inline-block; margin-left:7px; padding:3px 5px; border-radius:6px; background:#e6eee9; color:#55756c; font:800 7px var(--font-geist-mono),monospace; letter-spacing:.2px; vertical-align:middle; }
 .top-actions { display:flex; align-items:center; gap:14px; }
 .offline-badge { display:flex; gap:8px; align-items:center; font-size:12px; color:var(--ink-soft); }
 .offline-badge i { width:7px; height:7px; background:#5ba976; border-radius:50%; box-shadow:0 0 0 4px rgba(91,169,118,.14); }
