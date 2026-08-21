@@ -54,6 +54,7 @@ export type DwellingType = "house" | "apartment";
 export type InsulationLevel = "good" | "standard" | "poor";
 export type AltitudeBand = "low" | "medium" | "high";
 export type OccupancyProfile = "away" | "mixed" | "home";
+export type EnergyMode = "known-total" | "projected";
 
 export type HeatingSettings = {
   enabled: boolean;
@@ -74,6 +75,8 @@ export type HeatingEstimate = {
 
 export type SimulationInput = {
   annualKwh: number;
+  energyMode?: EnergyMode;
+  projectedBackgroundKwh?: number;
   backgroundHcShare: number;
   tariff: Tariff;
   appliances: Appliance[];
@@ -86,6 +89,7 @@ export type SimulationWarning = {
 };
 
 export type EnergyDistribution = {
+  totalKwh: number;
   declaredApplianceKwh: number;
   applianceKwh: number;
   backgroundKwh: number;
@@ -100,7 +104,6 @@ export type EnergyDistribution = {
   share: number;
   minShare: number;
   maxShare: number;
-  applianceScale: number;
 };
 
 export type BreakEvenResult =
@@ -108,6 +111,7 @@ export type BreakEvenResult =
   | { status: "always" | "never" | "equal"; share: null };
 
 export type SimulationEstimate = EnergyDistribution & {
+  baseCost: number;
   hphcCost: number;
   delta: number;
 };
@@ -132,6 +136,8 @@ export type SimulatorState = {
   tariffs: Tariff[];
   power: number;
   annualKwh: number;
+  energyMode: EnergyMode;
+  projectedBackgroundKwh: number;
   residents: number;
   backgroundHcShare: number;
   appliances: Appliance[];

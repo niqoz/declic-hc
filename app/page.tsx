@@ -7,7 +7,7 @@ import {
   HOUSEHOLD_REFERENCE_KWH,
 } from "./simulation/calculate";
 import { confidenceLabel, getApplianceCalibration } from "./simulation/calibration";
-import { estimateCoolingHcShare } from "./simulation/cooling";
+import { estimateCoolingProfile } from "./simulation/cooling";
 import { estimateHeating, offPeakDurationMinutes, updateOffPeakWindowTime } from "./simulation/heating";
 import {
   APPLIANCE_PRESETS,
@@ -27,17 +27,12 @@ import {
   setActiveProfile,
   upsertProfile,
 } from "./simulation/profiles";
-import {
-  householdScaleFactor,
-  REFERENCE_RESIDENTS,
-  scaleApplianceForHousehold,
-  scaleAppliancesForHousehold,
-} from "./simulation/scaling";
-import { CURRENT_STATE_VERSION } from "./simulation/storage";
+import { CURRENT_STATE_VERSION, migrateSimulationState } from "./simulation/storage";
 import type {
   Appliance,
   AppliancePreset,
   CalculationMode,
+  EnergyMode,
   HeatingSettings,
   OffPeakWindow,
   ProfilesStore,
@@ -97,7 +92,9 @@ const DEFAULT_SIMULATOR_STATE: SimulatorState = {
   tariffs: DEFAULT_TARIFFS,
   power: 6,
   annualKwh: HOUSEHOLD_REFERENCE_KWH,
-  residents: REFERENCE_RESIDENTS,
+  energyMode: "known-total",
+  projectedBackgroundKwh: HOUSEHOLD_REFERENCE_KWH - DEFAULT_APPLIANCES.reduce((sum, appliance) => sum + appliance.annualKwh, 0),
+  residents: 2,
   backgroundHcShare: 25,
   appliances: DEFAULT_APPLIANCES,
   heating: {
@@ -113,13 +110,27 @@ const DEFAULT_SIMULATOR_STATE: SimulatorState = {
   activeOffPeakWindowId: DEFAULT_HC_WINDOWS[0].id,
 };
 
+const toStateInput = (state: SimulatorState): SimulatorStateInput => ({
+  tariffs: state.tariffs,
+  power: state.power,
+  annualKwh: state.annualKwh,
+  energyMode: state.energyMode,
+  projectedBackgroundKwh: state.projectedBackgroundKwh,
+  residents: state.residents,
+  backgroundHcShare: state.backgroundHcShare,
+  appliances: state.appliances,
+  heating: state.heating,
+  offPeakWindows: state.offPeakWindows,
+  activeOffPeakWindowId: state.activeOffPeakWindowId,
+});
+
 export default function Home() {
   const [tariffs, setTariffs] = useState<Tariff[]>(DEFAULT_TARIFFS);
   const [power, setPower] = useState(6);
   const [annualKwh, setAnnualKwh] = useState(4500);
-  const [residents, setResidents] = useState(REFERENCE_RESIDENTS);
-  const annualKwhRef = useRef(4500);
-  const residentsRef = useRef(REFERENCE_RESIDENTS);
+  const [energyMode, setEnergyMode] = useState<EnergyMode>("known-total");
+  const [projectedBackgroundKwh, setProjectedBackgroundKwh] = useState(DEFAULT_SIMULATOR_STATE.projectedBackgroundKwh);
+  const [residents, setResidents] = useState(2);
   const nextApplianceIdRef = useRef(1000);
   const [backgroundHcShare, setBackgroundHcShare] = useState(25);
   const [appliances, setAppliances] = useState<Appliance[]>(DEFAULT_APPLIANCES);
@@ -149,9 +160,9 @@ export default function Home() {
     setTariffs(state.tariffs);
     setPower(state.power);
     setAnnualKwh(state.annualKwh);
-    annualKwhRef.current = state.annualKwh;
+    setEnergyMode(state.energyMode);
+    setProjectedBackgroundKwh(state.projectedBackgroundKwh);
     setResidents(state.residents);
-    residentsRef.current = state.residents;
     setBackgroundHcShare(state.backgroundHcShare);
     setAppliances(state.appliances);
     setHeating(state.heating);
@@ -188,7 +199,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!storageReady || !activeProfileId) return;
-    const stateInput: SimulatorStateInput = { tariffs, power, annualKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId };
+    const stateInput: SimulatorStateInput = { tariffs, power, annualKwh, energyMode, projectedBackgroundKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId };
     // Mise à jour du profil actif sans redéclencher l'effet sur le nouvel objet magasin.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setProfilesStore((current) => {
@@ -196,7 +207,7 @@ export default function Home() {
       saveProfilesStore(localStorage, updated);
       return updated;
     });
-  }, [storageReady, tariffs, power, annualKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId, activeProfileId]);
+  }, [storageReady, tariffs, power, annualKwh, energyMode, projectedBackgroundKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId, activeProfileId]);
 
   useEffect(() => {
     // Une plage active supprimée doit immédiatement basculer vers la première plage restante.
@@ -207,23 +218,34 @@ export default function Home() {
   const activeTariff = tariffs.find((tariff) => tariff.power === power) ?? tariffs[0];
   const activeOffPeakWindow = offPeakWindows.find((window) => window.id === activeOffPeakWindowId) ?? offPeakWindows[0];
   const heatingEstimate = useMemo(() => estimateHeating(heating, activeOffPeakWindow), [activeOffPeakWindow, heating]);
-  const coolingHcShare = useMemo(
-    () => estimateCoolingHcShare(heating.occupancy, activeOffPeakWindow),
+  const coolingProfile = useMemo(
+    () => estimateCoolingProfile(heating.occupancy, activeOffPeakWindow),
     [activeOffPeakWindow, heating.occupancy],
   );
   const modeledAppliances = useMemo(
     () => appliances.map((appliance) => appliance.type === "air-conditioning"
-      ? { ...appliance, hcShare: coolingHcShare }
+      ? { ...appliance,
+        annualKwh: appliance.calculationMode === "measured" ? appliance.annualKwh : appliance.annualKwh * coolingProfile.demandFactor,
+        lowKwh: appliance.calculationMode === "measured" ? appliance.lowKwh : appliance.lowKwh * coolingProfile.demandFactor,
+        highKwh: appliance.calculationMode === "measured" ? appliance.highKwh : appliance.highKwh * coolingProfile.demandFactor,
+        hcShare: coolingProfile.hcShare }
       : appliance),
-    [appliances, coolingHcShare],
+    [appliances, coolingProfile],
   );
   const results = useMemo(
-    () => calculateSimulation({ annualKwh, backgroundHcShare, tariff: activeTariff, appliances: modeledAppliances, heating: heatingEstimate }),
-    [activeTariff, annualKwh, backgroundHcShare, heatingEstimate, modeledAppliances],
+    () => calculateSimulation({ annualKwh, energyMode, projectedBackgroundKwh, backgroundHcShare, tariff: activeTariff, appliances: modeledAppliances, heating: heatingEstimate }),
+    [activeTariff, annualKwh, energyMode, projectedBackgroundKwh, backgroundHcShare, heatingEstimate, modeledAppliances],
   );
 
   function updateHeating(patch: Partial<HeatingSettings>) {
     setHeating((current) => ({ ...current, ...patch }));
+  }
+
+  function changeEnergyMode(mode: EnergyMode) {
+    if (mode === energyMode) return;
+    if (mode === "projected") setProjectedBackgroundKwh(Math.max(0, results.totalKwh - results.applianceKwh - heatingEstimate.annualKwh));
+    else setAnnualKwh(results.totalKwh);
+    setEnergyMode(mode);
   }
 
   function updateTariff(field: keyof Omit<Tariff, "power">, value: number) {
@@ -235,21 +257,7 @@ export default function Home() {
   }
 
   function updateAnnualKwh(value: number) {
-    const nextAnnualKwh = Math.max(0, value);
-    const from = { annualKwh: annualKwhRef.current, residents: residentsRef.current };
-    const to = { annualKwh: nextAnnualKwh, residents: residentsRef.current };
-    annualKwhRef.current = nextAnnualKwh;
-    setAnnualKwh(nextAnnualKwh);
-    setAppliances((current) => scaleAppliancesForHousehold(current, from, to));
-  }
-
-  function updateResidents(value: number) {
-    const nextResidents = Math.min(12, Math.max(1, Math.round(value || 1)));
-    const from = { annualKwh: annualKwhRef.current, residents: residentsRef.current };
-    const to = { annualKwh: annualKwhRef.current, residents: nextResidents };
-    residentsRef.current = nextResidents;
-    setResidents(nextResidents);
-    setAppliances((current) => scaleAppliancesForHousehold(current, from, to));
+    setAnnualKwh(Math.max(0, value));
   }
 
   function updateApplianceKwh(id: number, annualKwhValue: number) {
@@ -277,7 +285,7 @@ export default function Home() {
       calculationMode: "reference" as CalculationMode,
       source: { ...INTERNAL_ESTIMATE_SOURCE },
     };
-    const appliance = scaleApplianceForHousehold({
+    const appliance = {
       id: nextApplianceIdRef.current++,
       type: model.type,
       name: model.name,
@@ -286,13 +294,7 @@ export default function Home() {
       highKwh: model.highKwh,
       calculationMode: model.calculationMode,
       source: { ...model.source },
-    }, {
-      annualKwh: HOUSEHOLD_REFERENCE_KWH,
-      residents: REFERENCE_RESIDENTS,
-    }, {
-      annualKwh,
-      residents,
-    });
+    };
     setAppliances((current) => [...current, appliance]);
   }
 
@@ -309,16 +311,11 @@ export default function Home() {
       return;
     }
     const preset = APPLIANCE_PRESETS.find((candidate) => candidate.type === appliance.type);
-    const contextFactor = preset ? householdScaleFactor(preset.type, {
-      annualKwh: HOUSEHOLD_REFERENCE_KWH,
-      residents: REFERENCE_RESIDENTS,
-    }, { annualKwh, residents }) : 1;
-    const contextAnnualKwh = preset ? preset.annualKwh * contextFactor : appliance.annualKwh;
-    const scale = contextAnnualKwh > 0 ? appliance.annualKwh / contextAnnualKwh : 1;
+    const scale = preset && preset.annualKwh > 0 ? appliance.annualKwh / preset.annualKwh : 1;
     updateAppliance(id, {
       calculationMode: mode,
-      lowKwh: preset ? preset.lowKwh * contextFactor * scale : appliance.annualKwh * 0.7,
-      highKwh: preset ? preset.highKwh * contextFactor * scale : appliance.annualKwh * 1.3,
+      lowKwh: preset ? preset.lowKwh * scale : appliance.annualKwh * 0.7,
+      highKwh: preset ? preset.highKwh * scale : appliance.annualKwh * 1.3,
       source: { ...(preset?.source ?? INTERNAL_ESTIMATE_SOURCE) },
     });
   }
@@ -334,8 +331,8 @@ export default function Home() {
   }
 
   function setTotalHcShare(totalShare: number) {
-    if (annualKwh <= 0 || results.backgroundKwh <= 0) return;
-    const desiredHcKwh = annualKwh * totalShare / 100;
+    if (results.totalKwh <= 0 || results.backgroundKwh <= 0) return;
+    const desiredHcKwh = results.totalKwh * totalShare / 100;
     const backgroundShare = (desiredHcKwh - results.scheduledHc - results.heatingHcKwh) / results.backgroundKwh * 100;
     setBackgroundHcShare(clamp(backgroundShare, 0, 100));
   }
@@ -386,9 +383,9 @@ export default function Home() {
     setTariffs(state.tariffs);
     setPower(state.power);
     setAnnualKwh(state.annualKwh);
-    annualKwhRef.current = state.annualKwh;
+    setEnergyMode(state.energyMode);
+    setProjectedBackgroundKwh(state.projectedBackgroundKwh);
     setResidents(state.residents);
-    residentsRef.current = state.residents;
     setBackgroundHcShare(state.backgroundHcShare);
     setAppliances(state.appliances);
     setHeating(state.heating);
@@ -400,7 +397,7 @@ export default function Home() {
   function handleCreateProfile() {
     const name = prompt("Nom de la nouvelle simulation :");
     if (!name?.trim()) return;
-    const stateInput: SimulatorStateInput = { tariffs, power, annualKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId };
+    const stateInput: SimulatorStateInput = { tariffs, power, annualKwh, energyMode, projectedBackgroundKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId };
     const { store: updated } = addProfile(profilesStore, name.trim(), stateInput);
     setProfilesStore(updated);
     saveProfilesStore(localStorage, updated);
@@ -412,14 +409,15 @@ export default function Home() {
     if (profile) {
       setProfilesStore(updated);
       saveProfilesStore(localStorage, updated);
-      loadProfileIntoState(profile.state);
+      const migrated = migrateSimulationState({ ...profile.state, version: 0 }, DEFAULT_SIMULATOR_STATE, APPLIANCE_PRESETS);
+      loadProfileIntoState(migrated);
     }
   }
 
   function handleExportProfile() {
     const profile = getActiveProfile(profilesStore);
     if (!profile) return;
-    const currentState: SimulatorStateInput = { tariffs, power, annualKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId };
+    const currentState: SimulatorStateInput = { tariffs, power, annualKwh, energyMode, projectedBackgroundKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId };
     const withLatest: typeof profile = { ...profile, state: currentState, updatedAt: new Date().toISOString() };
     downloadProfileJson(withLatest, APP_VERSION);
   }
@@ -432,15 +430,17 @@ export default function Home() {
     const file = event.target.files?.[0];
     if (!file) return;
     readProfileFile(file).then((profile) => {
+      const migratedState = migrateSimulationState({ ...profile.state, version: 0 }, DEFAULT_SIMULATOR_STATE, APPLIANCE_PRESETS);
+      const migratedProfile = { ...profile, state: toStateInput(migratedState) };
       const updated: ProfilesStore = {
         ...profilesStore,
-        profiles: [...profilesStore.profiles, profile],
-        activeProfileId: profile.id,
+        profiles: [...profilesStore.profiles, migratedProfile],
+        activeProfileId: migratedProfile.id,
       };
       setProfilesStore(updated);
       saveProfilesStore(localStorage, updated);
-      loadProfileIntoState(profile.state);
-      setNotice(`Profil « ${profile.name} » importé.`);
+      loadProfileIntoState(migratedProfile.state);
+      setNotice(`Profil « ${migratedProfile.name} » importé.`);
     }).catch(() => {
       setNotice("Ce fichier ne correspond pas au format attendu.");
     });
@@ -470,7 +470,8 @@ export default function Home() {
 
   const verdictPositive = results.delta > 1;
   const verdictNeutral = Math.abs(results.delta) <= 1;
-  const annualSliderMax = Math.max(20000, Math.ceil(annualKwh / 5000) * 5000);
+  const selectedEnergyKwh = energyMode === "known-total" ? annualKwh : projectedBackgroundKwh;
+  const annualSliderMax = Math.max(20000, Math.ceil(selectedEnergyKwh / 5000) * 5000);
   const powerSliderIndex = Math.max(0, tariffs.findIndex((tariff) => tariff.power === power));
   const schedulesCustomized = offPeakWindows.length !== DEFAULT_HC_WINDOWS.length || offPeakWindows.some((window, index) => window.start !== DEFAULT_HC_WINDOWS[index]?.start || window.end !== DEFAULT_HC_WINDOWS[index]?.end);
   const hphcEstimateMin = Math.min(results.lowEstimate.hphcCost, results.highEstimate.hphcCost);
@@ -516,16 +517,16 @@ export default function Home() {
         <div className="controls-column">
           <section className="panel setup-panel">
             <div className="step-heading"><span>01</span><div><p>VOTRE FOYER</p><h2>Posons le décor</h2></div></div>
+            <fieldset className="mode-selector">
+              <legend>Type de simulation</legend>
+              <button type="button" className={energyMode === "known-total" ? "active" : ""} aria-pressed={energyMode === "known-total"} onClick={() => changeEnergyMode("known-total")}><span>Facture connue</span><small>Le total annuel est fixé. Les usages servent à répartir ces kWh entre HP et HC.</small></button>
+              <button type="button" className={energyMode === "projected" ? "active" : ""} aria-pressed={energyMode === "projected"} onClick={() => changeEnergyMode("projected")}><span>Projection énergétique <b>travaux</b></span><small>Le total évolue avec le chauffage, l’isolation, la surface et les appareils.</small></button>
+            </fieldset>
             <div className="household-sliders">
               <label className="household-slider wide">
-                <span>Consommation annuelle <strong>{number.format(annualKwh)} kWh/an</strong></span>
-                <ThumbOnlyRange aria-label="Consommation annuelle en kilowattheures" min={0} max={annualSliderMax} step={100} value={annualKwh} onValueChange={updateAnnualKwh} />
+                <span>{energyMode === "known-total" ? "Consommation annuelle connue" : "Consommation hors usages détaillés"} <strong>{number.format(selectedEnergyKwh)} kWh/an</strong></span>
+                <ThumbOnlyRange aria-label={energyMode === "known-total" ? "Consommation annuelle connue en kilowattheures" : "Consommation de fond en kilowattheures"} min={0} max={annualSliderMax} step={100} value={selectedEnergyKwh} onValueChange={energyMode === "known-total" ? updateAnnualKwh : setProjectedBackgroundKwh} />
                 <small><span>0 kWh</span><span>{number.format(annualSliderMax)} kWh</span></small>
-              </label>
-              <label className="household-slider">
-                <span>Habitants <strong>{residents} personne{residents > 1 ? "s" : ""}</strong></span>
-                <ThumbOnlyRange aria-label="Nombre d’habitants" min={1} max={12} step={1} value={residents} onValueChange={updateResidents} />
-                <small><span>1 personne</span><span>12 personnes</span></small>
               </label>
               <label className="household-slider">
                 <span>Puissance du compteur <strong>{power} kVA</strong></span>
@@ -553,9 +554,9 @@ export default function Home() {
                 </div>
                 <div className="heating-result">
                   <span><small>CHAUFFAGE ESTIMÉ</small><strong>{number.format(heatingEstimate.annualKwh)} kWh/an</strong><em>fourchette {number.format(heatingEstimate.lowKwh)}–{number.format(heatingEstimate.highKwh)} kWh</em></span>
-                  <span><small>PART EN HEURES CREUSES</small><strong>{heatingEstimate.hcShare.toFixed(0)} %</strong><em>{number.format(results.heatingHcKwh)} kWh/an en HC</em></span>
+                  <span><small>PART EN HEURES CREUSES</small><strong>{heatingEstimate.hcShare.toFixed(0)} %</strong><em>{energyMode === "projected" ? `${number.format(results.heatingHcKwh)} kWh/an en HC` : "activée en mode projection"}</em></span>
                 </div>
-                <p className="heating-note">Profil standardisé : 19 °C en confort, 17 °C la nuit et pendant les absences. Sans chauffage à accumulation déclaré, seuls les besoins ayant naturellement lieu pendant la plage HC sont comptés en heures creuses. Estimation pédagogique H3 à affiner avec les <a href="https://www.data.corsica/explore/dataset/dpe-logements-existants-en-corse-depuis-juillet-2021/" target="_blank" rel="noreferrer">DPE corses</a>.</p>
+                <p className="heating-note">Profil standardisé : 19 °C en confort, 17 °C la nuit et pendant les absences. Sans chauffage à accumulation déclaré, seuls les besoins ayant naturellement lieu pendant la plage HC sont comptés en heures creuses. {energyMode === "known-total" ? "Avec une facture connue, les choix techniques restent informatifs et ne modifient pas le calcul : passez en projection pour comparer des travaux." : "En projection, le chauffage fait varier la consommation totale selon les caractéristiques choisies."} Estimation pédagogique H3 à affiner avec les <a href="https://www.data.corsica/explore/dataset/dpe-logements-existants-en-corse-depuis-juillet-2021/" target="_blank" rel="noreferrer">DPE corses</a>.</p>
               </>}
             </section>
             <label className="range-label"><span>Répartition totale en heures creuses <strong>{results.share.toFixed(0)} %</strong></span><ThumbOnlyRange aria-label="Répartition totale en heures creuses" min={results.minShare} max={results.maxShare} step={1} value={results.share} disabled={results.backgroundKwh <= 0} onValueChange={setTotalHcShare} /></label>
@@ -565,7 +566,7 @@ export default function Home() {
 
           <section className="panel appliance-panel">
             <div className="step-heading"><span>02</span><div><p>USAGES PILOTÉS</p><h2>Programmez les bons usages</h2></div></div>
-            <div className="behavior-guide"><span><strong>Courbe adaptée au foyer</strong>Les usages liés au ménage évoluent avec {residents} habitant{residents > 1 ? "s" : ""} et la consommation annuelle par habitant. Le chauffage est estimé séparément.</span><div className="usage-balance"><b>{number.format(results.declaredApplianceKwh)} kWh</b><small>usages listés</small><b>{number.format(results.backgroundKwh)} kWh</b><small>reste du foyer</small></div></div>
+            <div className="behavior-guide"><span><strong>Usages indépendants</strong>Chaque valeur reste celle saisie ou celle du modèle de référence. Modifier le chauffage ou le total ne redimensionne aucun appareil.</span><div className="usage-balance"><b>{number.format(results.applianceKwh)} kWh</b><small>usages listés</small><b>{number.format(results.backgroundKwh)} kWh</b><small>reste du foyer</small></div></div>
             <div className="appliance-list">{appliances.map((appliance) => {
               const calibration = getApplianceCalibration(appliance.type);
               const isSummerCooling = appliance.type === "air-conditioning";
@@ -573,7 +574,7 @@ export default function Home() {
               <button className="remove" aria-label={`Retirer ${appliance.name}`} onClick={() => setAppliances((current) => current.filter((item) => item.id !== appliance.id))}>×</button>
               <div className="appliance-identity"><input className="appliance-name" aria-label="Nom de l’usage" value={appliance.name} onChange={(e) => updateAppliance(appliance.id, { name: e.target.value })} /><span className={`behavior-toggle ${appliance.calculationMode}`}><i />{appliance.calculationMode === "measured" ? "Valeur mesurée" : appliance.calculationMode === "detailed" ? "Calcul détaillé" : "Valeur de référence"}</span></div>
               <div className="appliance-energy"><NumericInput aria-label={`Consommation annuelle de ${appliance.name}`} min={0} step={10} value={Math.round(appliance.annualKwh)} onValueChange={(value) => updateApplianceKwh(appliance.id, value)} /><span>kWh/an</span></div>
-              <div className="schedule scheduled"><span className="schedule-icon">{isSummerCooling ? "☀" : "☾"}</span><span><small>{isSummerCooling ? "USAGE ESTIVAL SELON PRÉSENCE" : "TOUJOURS PROGRAMMÉ EN HC"}</small>{isSummerCooling ? `${coolingHcShare.toFixed(0)} % en HC · profil ${heating.occupancy === "away" ? "absent" : heating.occupancy === "mixed" ? "mixte" : "présent"}` : `${formatTime(activeOffPeakWindow.start)}–${formatTime(activeOffPeakWindow.end)}`}</span></div>
+              <div className="schedule scheduled"><span className="schedule-icon">{isSummerCooling ? "☀" : "☾"}</span><span><small>{isSummerCooling ? "USAGE ESTIVAL SELON PRÉSENCE" : "TOUJOURS PROGRAMMÉ EN HC"}</small>{isSummerCooling ? `${coolingProfile.hcShare.toFixed(0)} % en HC · ${number.format(modeledAppliances.find((item) => item.id === appliance.id)?.annualKwh ?? appliance.annualKwh)} kWh profilés · profil ${heating.occupancy === "away" ? "absent" : heating.occupancy === "mixed" ? "mixte" : "présent"}` : `${formatTime(activeOffPeakWindow.start)}–${formatTime(activeOffPeakWindow.end)}`}</span></div>
               <details className="appliance-assumptions">
                 <summary><span><strong>Ajuster le modèle</strong><small>Fourchette {number.format(appliance.lowKwh)}–{number.format(appliance.highKwh)} kWh/an · méthode et sources</small></span><span className="assumption-summary-action" aria-hidden="true">Réglages <b>⌄</b></span></summary>
                 <div className="assumption-grid">
@@ -582,7 +583,7 @@ export default function Home() {
                   <label>Estimation haute<div className="compact-input"><NumericInput min={appliance.annualKwh} step={10} disabled={appliance.calculationMode === "measured"} value={Math.round(appliance.highKwh)} onValueChange={(value) => updateAppliance(appliance.id, { highKwh: Math.max(appliance.annualKwh, value) })} /><span>kWh</span></div></label>
                 </div>
                 <p className="offpeak-assumption"><strong>Placement retenu :</strong> {isSummerCooling ? <>usage diurne de 12 h à 22 h, limité aux périodes de présence : soirée en semaine pour le profil absent, deux journées de télétravail pour le profil mixte et journée complète pour le profil présent.</> : <>100 % de cet usage opportuniste pendant les heures creuses.</>}</p>
-                {calibration && <p className={`calibration-status ${calibration.confidence}`}><strong>Fiabilité {confidenceLabel(calibration.confidence)}</strong>{calibration.sampleSize > 0 ? <>Échantillon : {calibration.sampleSize} logements · coefficient foyer appliqué {calibration.householdExponent.toFixed(2)} (intervalle 95 % : {calibration.householdExponentCi95[0].toFixed(2)}–{calibration.householdExponentCi95[1].toFixed(2)}).</> : <>Aucune voiture électrique exploitable dans le fichier ouvert.</>} {!calibration.residentCalibrated && calibration.residentExponent > 0 && <em>La correction selon les habitants reste indicative.</em>}</p>}
+                {calibration && <p className={`calibration-status ${calibration.confidence}`}><strong>Données {confidenceLabel(calibration.confidence)}</strong>{calibration.sampleSize > 0 ? <>Échantillon : {calibration.sampleSize} logements. La valeur de référence et sa fourchette ne sont pas redimensionnées automatiquement.</> : <>Aucune observation exploitable dans le fichier ouvert : cette valeur est indicative.</>}</p>}
                 <p className={`appliance-source ${appliance.source.kind}`}>Source : <strong>{appliance.source.organization}</strong> — {appliance.source.label}{appliance.source.year ? ` (${appliance.source.year})` : ""}{appliance.source.url && <> · <a href={appliance.source.url} target="_blank" rel="noreferrer">consulter</a></>}</p>
               </details>
             </article>})}</div>
@@ -609,9 +610,9 @@ export default function Home() {
           <div className="cost-lines">
             <p>FACTURE EDF ANNUELLE ESTIMÉE · TTC</p>
             <article><span><strong>Option Base</strong><small>Abonnement {preciseEuros.format(results.baseSubscriptionCost)} + énergie {preciseEuros.format(results.baseEnergyCost)}</small></span><span className="cost-total"><strong>{preciseEuros.format(results.baseCost)}</strong><small>{preciseEuros.format(results.baseCost / 12)} / mois</small></span></article>
-            <article className="highlight"><span><strong>Option HP / HC</strong><small>Abonnement {preciseEuros.format(results.hphcSubscriptionCost)} + HP {preciseEuros.format(results.hpEnergyCost)} + HC {preciseEuros.format(results.hcEnergyCost)}</small><small>Scénarios bas/haut : {preciseEuros.format(hphcEstimateMin)}–{preciseEuros.format(hphcEstimateMax)} / an</small></span><span className="cost-total"><strong>{preciseEuros.format(results.hphcCost)}</strong><small>{preciseEuros.format(results.hphcCost / 12)} / mois</small></span></article>
+            <article className="highlight"><span><strong>Option HP / HC</strong><small>Abonnement {preciseEuros.format(results.hphcSubscriptionCost)} + HP {preciseEuros.format(results.hpEnergyCost)} + HC {preciseEuros.format(results.hcEnergyCost)}</small>{energyMode === "projected" && <small>Scénarios bas/haut : {preciseEuros.format(hphcEstimateMin)}–{preciseEuros.format(hphcEstimateMax)} / an</small>}</span><span className="cost-total"><strong>{preciseEuros.format(results.hphcCost)}</strong><small>{preciseEuros.format(results.hphcCost / 12)} / mois</small></span></article>
           </div>
-          <div className="distribution"><div className="distribution-title"><span>Répartition HP / HC<small>Plage compteur : {formatTime(activeOffPeakWindow.start)}–{formatTime(activeOffPeakWindow.end)}</small></span><strong>{results.share.toFixed(0)} % en HC</strong></div><div className="bar"><span style={{ width: `${results.share}%` }} /></div><div className="bar-legend"><span>☀ HP · {number.format(results.hpKwh)} kWh</span><span>☾ HC · {number.format(results.hcKwh)} kWh</span></div><div className="energy-breakdown"><span>Usages listés<strong>{number.format(results.declaredApplianceKwh)} kWh</strong></span><span>Chauffage<strong>{number.format(results.heatingKwh)} kWh</strong></span><span>Chauffage en HC<strong>{number.format(results.heatingHcKwh)} kWh</strong></span><span>Appareils en HC<strong>{number.format(results.scheduledHc)} kWh</strong></span></div></div>
+          <div className="distribution"><div className="distribution-title"><span>Répartition HP / HC<small>{energyMode === "projected" ? "Total projeté" : "Total connu"} : {number.format(results.totalKwh)} kWh · plage {formatTime(activeOffPeakWindow.start)}–{formatTime(activeOffPeakWindow.end)}</small></span><strong>{results.share.toFixed(0)} % en HC</strong></div><div className="bar"><span style={{ width: `${results.share}%` }} /></div><div className="bar-legend"><span>☀ HP · {number.format(results.hpKwh)} kWh</span><span>☾ HC · {number.format(results.hcKwh)} kWh</span></div><div className="energy-breakdown"><span>Usages listés<strong>{number.format(results.applianceKwh)} kWh</strong></span><span>Reste du foyer<strong>{number.format(results.backgroundKwh)} kWh</strong></span><span>Chauffage<strong>{number.format(results.heatingKwh)} kWh</strong></span><span>Chauffage en HC<strong>{number.format(results.heatingHcKwh)} kWh</strong></span><span>Appareils en HC<strong>{number.format(results.scheduledHc)} kWh</strong></span></div></div>
           <div className="threshold"><span className="threshold-icon">◎</span><p><strong>Votre point d’équilibre</strong><br />{breakEvenText}</p></div>
           <p className="disclaimer"><strong>Total inclus :</strong> abonnement, énergie et taxes déjà intégrées aux tarifs TTC EDF Corse. Non inclus : services ou remises propres au contrat, régularisations et changements de tarif au cours des 12 mois. Comparez l’estimation à une facture réelle avant toute décision contractuelle.</p>
         </aside>

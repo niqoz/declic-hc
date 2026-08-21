@@ -14,6 +14,10 @@ function isCoolingPeriod(profile: OccupancyProfile, weekday: number, minute: num
 }
 
 export function estimateCoolingHcShare(profile: OccupancyProfile, window: OffPeakWindow) {
+  return estimateCoolingProfile(profile, window).hcShare;
+}
+
+export function estimateCoolingProfile(profile: OccupancyProfile, window: OffPeakWindow) {
   let totalPeriods = 0;
   let offPeakPeriods = 0;
   for (let weekday = 0; weekday < 7; weekday += 1) {
@@ -23,5 +27,14 @@ export function estimateCoolingHcShare(profile: OccupancyProfile, window: OffPea
       if (isMinuteOffPeak(minute, window)) offPeakPeriods++;
     }
   }
-  return totalPeriods > 0 ? offPeakPeriods / totalPeriods * 100 : 0;
+  let mixedPeriods = 0;
+  for (let weekday = 0; weekday < 7; weekday += 1) {
+    for (let minute = 0; minute < 1440; minute += 10) {
+      if (isCoolingPeriod("mixed", weekday, minute)) mixedPeriods++;
+    }
+  }
+  return {
+    hcShare: totalPeriods > 0 ? offPeakPeriods / totalPeriods * 100 : 0,
+    demandFactor: mixedPeriods > 0 ? totalPeriods / mixedPeriods : 1,
+  };
 }

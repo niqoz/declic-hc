@@ -8,7 +8,7 @@ import type {
 } from "./types.js";
 
 export const PROFILES_STORAGE_KEY = "hphc-profiles";
-export const PROFILES_STORE_VERSION = 2;
+export const PROFILES_STORE_VERSION = 3;
 const DEFAULT_PROFILE_NAME = "Ma simulation";
 
 type StorageReader = Pick<Storage, "getItem">;
@@ -34,6 +34,8 @@ function deepCloneState(state: SimulatorStateInput): SimulatorStateInput {
     tariffs: state.tariffs.map((tariff) => ({ ...tariff })),
     power: state.power,
     annualKwh: state.annualKwh,
+    energyMode: state.energyMode,
+    projectedBackgroundKwh: state.projectedBackgroundKwh,
     residents: state.residents,
     backgroundHcShare: state.backgroundHcShare,
     appliances: state.appliances.map((appliance) => ({ ...appliance, source: { ...appliance.source } })),
@@ -48,6 +50,8 @@ function stateInputFromState(state: SimulatorState): SimulatorStateInput {
     tariffs: state.tariffs,
     power: state.power,
     annualKwh: state.annualKwh,
+    energyMode: state.energyMode,
+    projectedBackgroundKwh: state.projectedBackgroundKwh,
     residents: state.residents,
     backgroundHcShare: state.backgroundHcShare,
     appliances: state.appliances,
@@ -115,13 +119,14 @@ export function migrateFromLegacyState(
   }
   try {
     const legacyRaw = storage.getItem(STATE_STORAGE_KEY);
-    if (!legacyRaw) return store;
-    const migrated = loadSimulationState(storage, defaults, presets);
+    const migrated = legacyRaw
+      ? loadSimulationState(storage, defaults, presets)
+      : migrateSimulationState(defaults, defaults, presets);
     const stateInput = stateInputFromState(migrated);
     const profile = createSavedProfile(DEFAULT_PROFILE_NAME, stateInput);
     const next: ProfilesStore = { version: PROFILES_STORE_VERSION, profiles: [profile], activeProfileId: profile.id };
     saveProfilesStore(storage, next);
-    storage.removeItem(STATE_STORAGE_KEY);
+    if (legacyRaw) storage.removeItem(STATE_STORAGE_KEY);
     return next;
   } catch {
     return store;

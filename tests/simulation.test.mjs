@@ -10,14 +10,13 @@ import {
 } from "../.test-dist/calculate.js";
 import { APPLIANCE_PRESETS, DEFAULT_APPLIANCES } from "../.test-dist/presets.js";
 import { ELECDOM_DATA_QUALITY, getApplianceCalibration } from "../.test-dist/calibration.js";
-import { estimateCoolingHcShare } from "../.test-dist/cooling.js";
+import { estimateCoolingHcShare, estimateCoolingProfile } from "../.test-dist/cooling.js";
 import {
   estimateHeating,
   isValidOffPeakWindow,
   offPeakDurationMinutes,
   updateOffPeakWindowTime,
 } from "../.test-dist/heating.js";
-import { householdScaleFactor, scaleAppliancesForHousehold } from "../.test-dist/scaling.js";
 import {
   CURRENT_STATE_VERSION,
   loadSimulationState,
@@ -55,6 +54,8 @@ const defaultState = {
   tariffs: [tariff],
   power: 6,
   annualKwh: 4500,
+  energyMode: "known-total",
+  projectedBackgroundKwh: 2987,
   residents: 2,
   backgroundHcShare: 25,
   appliances,
@@ -134,9 +135,79 @@ test("ne place en HC que le chauffage ayant naturellement lieu dans la plage", (
   closeTo(home.annualKwh, 4092.28, 0.1);
 });
 
+test("respecte la causalité des paramètres de chauffage en projection", () => {
+  const window = { id: 1, start: "22:10", end: "06:10" };
+  const simulate = (heatingPatch) => {
+    const settings = { ...defaultState.heating, enabled: true, surfaceM2: 80, system: "radiators", ...heatingPatch };
+    return calculateSimulation({
+      annualKwh: 0,
+      energyMode: "projected",
+      projectedBackgroundKwh: 2600,
+      backgroundHcShare: 20,
+      tariff,
+      appliances,
+      heating: estimateHeating(settings, window),
+    });
+  };
+  const good = simulate({ insulation: "good" });
+  const standard = simulate({ insulation: "standard" });
+  const poor = simulate({ insulation: "poor" });
+  assert.ok(good.totalKwh < standard.totalKwh && standard.totalKwh < poor.totalKwh);
+  assert.ok(good.baseCost < standard.baseCost && standard.baseCost < poor.baseCost);
+  assert.ok(good.hphcCost < standard.hphcCost && standard.hphcCost < poor.hphcCost);
+
+  const heatPump = simulate({ system: "heat-pump" });
+  const radiators = simulate({ system: "radiators" });
+  assert.ok(heatPump.totalKwh < radiators.totalKwh);
+  assert.ok(heatPump.baseCost < radiators.baseCost);
+  assert.ok(heatPump.hphcCost < radiators.hphcCost);
+
+  const small = simulate({ surfaceM2: 40 });
+  const large = simulate({ surfaceM2: 120 });
+  assert.ok(small.totalKwh < large.totalKwh);
+  assert.ok(small.hphcCost < large.hphcCost);
+  closeTo(good.applianceKwh, poor.applianceKwh);
+});
+
+test("les choix de travaux ne changent pas une facture connue", () => {
+  const window = { id: 1, start: "22:10", end: "06:10" };
+  const simulate = (patch) => calculateSimulation({
+    annualKwh: 4500,
+    energyMode: "known-total",
+    backgroundHcShare: 25,
+    tariff,
+    appliances,
+    heating: estimateHeating({ ...defaultState.heating, enabled: true, ...patch }, window),
+  });
+  const good = simulate({ insulation: "good", system: "heat-pump" });
+  const poor = simulate({ insulation: "poor", system: "radiators" });
+  closeTo(good.totalKwh, poor.totalKwh);
+  closeTo(good.baseCost, poor.baseCost);
+  closeTo(good.hphcCost, poor.hphcCost);
+  closeTo(good.heatingKwh, 0);
+  assert.ok(good.declaredHeatingKwh < poor.declaredHeatingKwh);
+});
+
+test("conserve un bilan énergétique fini sur toute la grille de chauffage", () => {
+  const window = { id: 1, start: "21:40", end: "05:40" };
+  for (const system of ["radiators", "heat-pump"])
+    for (const dwellingType of ["house", "apartment"])
+      for (const insulation of ["good", "standard", "poor"])
+        for (const altitude of ["low", "medium", "high"])
+          for (const occupancy of ["away", "mixed", "home"]) {
+            const heating = estimateHeating({ ...defaultState.heating, enabled: true, system, dwellingType, insulation, altitude, occupancy }, window);
+            const result = calculateSimulation({ annualKwh: 0, energyMode: "projected", projectedBackgroundKwh: 2500, backgroundHcShare: 25, tariff, appliances, heating });
+            closeTo(result.hpKwh + result.hcKwh, result.totalKwh, 1e-6);
+            assert.ok([result.totalKwh, result.hpKwh, result.hcKwh, result.baseCost, result.hphcCost].every(Number.isFinite));
+            assert.ok(result.hpKwh >= 0 && result.hcKwh >= 0);
+          }
+});
+
 test("retire le chauffage du reste du foyer et conserve le bilan énergétique", () => {
   const result = calculateSimulation({
     annualKwh: 4500,
+    energyMode: "projected",
+    projectedBackgroundKwh: 3500,
     backgroundHcShare: 25,
     tariff,
     appliances: [],
@@ -149,46 +220,33 @@ test("retire le chauffage du reste du foyer et conserve le bilan énergétique",
   closeTo(result.hpKwh + result.hcKwh, 4500);
 });
 
-test("préserve toujours le bilan énergétique et plafonne les usages", () => {
+test("préserve les usages même s'ils dépassent le total connu", () => {
   const oversized = [
     { ...appliances[0], id: 10, name: "Usage A", annualKwh: 3000, lowKwh: 2500, highKwh: 3500 },
     { ...appliances[1], id: 11, name: "Usage B", annualKwh: 2000, lowKwh: 1500, highKwh: 2500 },
   ];
   const result = calculateSimulation({ annualKwh: 4000, backgroundHcShare: 25, tariff, appliances: oversized });
 
-  closeTo(result.applianceScale, 0.8);
-  closeTo(result.applianceKwh, 4000);
+  closeTo(result.applianceKwh, 5000);
+  closeTo(result.totalKwh, 5000);
   closeTo(result.backgroundKwh, 0);
-  closeTo(result.hpKwh + result.hcKwh, 4000);
+  closeTo(result.hpKwh + result.hcKwh, 5000);
   assert.ok(result.hpKwh >= 0 && result.hcKwh >= 0);
   assert.equal(result.warnings[0].code, "APPLIANCES_EXCEED_TOTAL");
 });
 
-test("fait évoluer les usages liés au foyer avec les kWh et les habitants", () => {
-  const raised = scaleAppliancesForHousehold(
+test("ne redimensionne jamais un appareil à cause du chauffage ou du total", () => {
+  const withoutHeating = calculateSimulation({ annualKwh: 4500, backgroundHcShare: 25, tariff, appliances });
+  const withHeating = calculateSimulation({
+    annualKwh: 4500,
+    backgroundHcShare: 25,
+    tariff,
     appliances,
-    { annualKwh: 4500, residents: 2 },
-    { annualKwh: 10000, residents: 4 },
-  );
-
-  assert.ok(raised[0].annualKwh > appliances[0].annualKwh);
-  assert.ok(raised[1].annualKwh > appliances[1].annualKwh);
-  assert.ok(raised[2].annualKwh > appliances[2].annualKwh);
-
-  const waterHeaterCalibration = getApplianceCalibration("water-heater");
-  const doubledHousehold = householdScaleFactor(
-    "water-heater",
-    { annualKwh: 4500, residents: 2 },
-    { annualKwh: 9000, residents: 4 },
-  );
-  closeTo(doubledHousehold, 2 ** waterHeaterCalibration.residentExponent);
-
-  const measured = scaleAppliancesForHousehold(
-    [{ ...appliances[0], calculationMode: "measured", annualKwh: 1350 }],
-    { annualKwh: 4500, residents: 2 },
-    { annualKwh: 10000, residents: 4 },
-  );
-  assert.equal(measured[0].annualKwh, 1350);
+    heating: { annualKwh: 9000, lowKwh: 7000, highKwh: 11000, hcShare: 30 },
+  });
+  closeTo(withoutHeating.applianceKwh, withHeating.applianceKwh);
+  closeTo(withHeating.heatingKwh, 0);
+  closeTo(withHeating.totalKwh, 4500);
 });
 
 test("gère une consommation nulle sans produire de valeur invalide", () => {
@@ -241,9 +299,11 @@ test("décrit correctement les grilles sans point d'équilibre atteignable", () 
   closeTo(below.share, 50);
 });
 
-test("répercute les fourchettes des usages sur le coût HP/HC", () => {
+test("répercute les fourchettes sur la consommation et les coûts projetés", () => {
   const result = calculateSimulation({
     annualKwh: 4500,
+    energyMode: "projected",
+    projectedBackgroundKwh: 3000,
     backgroundHcShare: 25,
     tariff,
     appliances: [{ ...appliances[0], annualKwh: 1000, lowKwh: 200, highKwh: 2000 }],
@@ -251,8 +311,12 @@ test("répercute les fourchettes des usages sur le coût HP/HC", () => {
 
   assert.ok(result.lowEstimate.hcKwh < result.hcKwh);
   assert.ok(result.highEstimate.hcKwh > result.hcKwh);
-  assert.ok(result.lowEstimate.hphcCost > result.hphcCost);
-  assert.ok(result.highEstimate.hphcCost < result.hphcCost);
+  assert.ok(result.lowEstimate.totalKwh < result.totalKwh);
+  assert.ok(result.highEstimate.totalKwh > result.totalKwh);
+  assert.ok(result.lowEstimate.baseCost < result.baseCost);
+  assert.ok(result.highEstimate.baseCost > result.baseCost);
+  assert.ok(result.lowEstimate.hphcCost < result.hphcCost);
+  assert.ok(result.highEstimate.hphcCost > result.hphcCost);
 });
 
 test("maintient des plages HC de huit heures et neutralise les plages invalides", () => {
@@ -273,17 +337,44 @@ test("répartit la climatisation estivale selon la présence diurne", () => {
   const away = estimateCoolingHcShare("away", window);
   const mixed = estimateCoolingHcShare("mixed", window);
   const home = estimateCoolingHcShare("home", window);
+  const awayProfile = estimateCoolingProfile("away", window);
+  const mixedProfile = estimateCoolingProfile("mixed", window);
+  const homeProfile = estimateCoolingProfile("home", window);
 
   closeTo(away, 5.1852, 0.001);
   closeTo(mixed, 4.2424, 0.001);
   closeTo(home, 3.3333, 0.001);
   assert.ok(away > mixed && mixed > home);
+  assert.ok(awayProfile.demandFactor < mixedProfile.demandFactor && mixedProfile.demandFactor < homeProfile.demandFactor);
   assert.equal(estimateCoolingHcShare("home", { id: 2, start: "23:45", end: "07:45" }), 0);
 
   const cooling = { ...APPLIANCE_PRESETS.find((preset) => preset.type === "air-conditioning"), id: 99, hcShare: away };
   const result = calculateSimulation({ annualKwh: 1000, backgroundHcShare: 0, tariff, appliances: [cooling] });
   closeTo(result.scheduledHc, cooling.annualKwh * away / 100);
   assert.ok(result.scheduledHc < cooling.annualKwh, "la climatisation ne doit plus être placée à 100 % en HC");
+});
+
+test("la présence augmente bien la consommation estivale projetée", () => {
+  const window = { id: 1, start: "22:10", end: "06:10" };
+  const preset = APPLIANCE_PRESETS.find((candidate) => candidate.type === "air-conditioning");
+  const simulate = (occupancy) => {
+    const profile = estimateCoolingProfile(occupancy, window);
+    const cooling = {
+      ...preset,
+      id: 99,
+      annualKwh: preset.annualKwh * profile.demandFactor,
+      lowKwh: preset.lowKwh * profile.demandFactor,
+      highKwh: preset.highKwh * profile.demandFactor,
+      hcShare: profile.hcShare,
+    };
+    return calculateSimulation({ annualKwh: 0, energyMode: "projected", projectedBackgroundKwh: 2500, backgroundHcShare: 20, tariff, appliances: [cooling] });
+  };
+  const away = simulate("away");
+  const mixed = simulate("mixed");
+  const home = simulate("home");
+  assert.ok(away.totalKwh < mixed.totalKwh && mixed.totalKwh < home.totalKwh);
+  assert.ok(away.baseCost < mixed.baseCost && mixed.baseCost < home.baseCost);
+  assert.ok(away.hphcCost < mixed.hphcCost && mixed.hphcCost < home.hphcCost);
 });
 
 test("sauvegarde une version explicite et recharge le même état", () => {
@@ -298,7 +389,7 @@ test("sauvegarde une version explicite et recharge le même état", () => {
   assert.deepEqual(loadSimulationState(storage, defaultState, APPLIANCE_PRESETS), defaultState);
 });
 
-test("recalibre un ancien appareil de référence lors de la migration", () => {
+test("préserve la valeur proportionnelle explicite d'un ancien appareil", () => {
   const legacy = {
     version: 2,
     annualKwh: 7200,
@@ -311,15 +402,11 @@ test("recalibre un ancien appareil de référence lors de la migration", () => {
   const migrated = loadSimulationState({ getItem: () => JSON.stringify(legacy) }, defaultState, APPLIANCE_PRESETS);
 
   assert.equal(migrated.version, CURRENT_STATE_VERSION);
-  const preset = APPLIANCE_PRESETS.find((candidate) => candidate.type === "water-heater");
-  const factor = householdScaleFactor("water-heater", { annualKwh: 4500, residents: 2 }, { annualKwh: 7200, residents: 2 });
-  closeTo(migrated.appliances[0].annualKwh, preset.annualKwh * factor);
-  closeTo(migrated.appliances[0].lowKwh, preset.lowKwh * factor);
-  closeTo(migrated.appliances[0].highKwh, preset.highKwh * factor);
+  closeTo(migrated.appliances[0].annualKwh, 1200 * 7200 / 4500);
   assert.equal(migrated.residents, 2);
 
   const afterHouseholdChange = calculateSimulation({ annualKwh: 10000, backgroundHcShare: 25, tariff, appliances: migrated.appliances });
-  closeTo(afterHouseholdChange.declaredApplianceKwh, preset.annualKwh * factor);
+  closeTo(afterHouseholdChange.declaredApplianceKwh, 1200 * 7200 / 4500);
 });
 
 test("migre une sauvegarde plus ancienne et répare ses plages invalides", () => {
@@ -337,8 +424,9 @@ test("migre une sauvegarde plus ancienne et répare ses plages invalides", () =>
   assert.equal(migrated.annualKwh, 7200);
   assert.equal(migrated.backgroundHcShare, 100);
   const preset = APPLIANCE_PRESETS.find((candidate) => candidate.type === "water-heater");
-  const factor = householdScaleFactor("water-heater", { annualKwh: 4500, residents: 2 }, { annualKwh: 7200, residents: 2 });
-  closeTo(migrated.appliances[0].annualKwh, preset.annualKwh * factor);
+  closeTo(migrated.appliances[0].annualKwh, preset.annualKwh);
+  assert.equal(migrated.energyMode, "known-total");
+  closeTo(migrated.projectedBackgroundKwh, 7200 - preset.annualKwh);
   assert.equal(migrated.appliances[0].calculationMode, "reference");
   assert.deepEqual(migrated.offPeakWindows, defaultState.offPeakWindows);
   assert.equal(migrated.activeOffPeakWindowId, 1);
@@ -382,6 +470,20 @@ test("migre l'ancienne sauvegarde vers un profil nommé", () => {
   assert.equal(store.profiles[0].state.annualKwh, defaultState.annualKwh);
   assert.equal(store.profiles[0].state.power, defaultState.power);
   assert.ok(!values.has(STATE_STORAGE_KEY));
+});
+
+test("crée un profil persistant au premier lancement", () => {
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  };
+  const store = migrateFromLegacyState(storage, defaultState, APPLIANCE_PRESETS);
+  assert.equal(store.profiles.length, 1);
+  assert.equal(store.profiles[0].name, "Ma simulation");
+  assert.equal(store.activeProfileId, store.profiles[0].id);
+  assert.equal(loadProfilesStore(storage).profiles.length, 1);
 });
 
 test("met à niveau le magasin de profils sans recréer le profil existant", () => {
@@ -483,9 +585,10 @@ test("sauvegarde et recharge un store de profils", () => {
 });
 
 test("utilise le même numéro de version dans la PWA, le cache et le paquet", async () => {
-  const [versionSource, pageSource, manifestSource, serviceWorkerSource, packageSource, lockSource] = await Promise.all([
+  const [versionSource, pageSource, cssSource, manifestSource, serviceWorkerSource, packageSource, lockSource] = await Promise.all([
     readFile(new URL("../app/version.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
     readFile(new URL("../public/sw.js", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
@@ -493,7 +596,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.8.1");
+  assert.equal(version, "0.9.0");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);
@@ -506,7 +609,11 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   assert.match(pageSource, /results\.baseSubscriptionCost/);
   assert.match(pageSource, /results\.hcEnergyCost/);
   assert.doesNotMatch(pageSource, /<label>Consommation annuelle<div className="input-wrap">/);
-  assert.match(pageSource, /aria-label="Nombre d’habitants" min=\{1\} max=\{12\}/);
+  assert.doesNotMatch(pageSource, /aria-label="Nombre d’habitants"/);
+  assert.match(pageSource, /Facture connue/);
+  assert.match(pageSource, /Projection énergétique/);
+  assert.match(cssSource, /grid-template-columns: minmax\(0, 1fr\) repeat\(5, 40px\)/);
+  assert.match(cssSource, /\.icon-sm \{ width: 40px; height: 40px;/);
   assert.match(pageSource, /aria-label="Puissance du compteur" min=\{0\}/);
   assert.match(pageSource, /♨ Chauffage électrique/);
   assert.match(pageSource, /Absent en journée/);

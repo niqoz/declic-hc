@@ -1,12 +1,12 @@
 import { clamp } from "./calculate.js";
 import { isValidOffPeakWindow } from "./heating.js";
 import { INTERNAL_ESTIMATE_SOURCE } from "./presets.js";
-import { REFERENCE_RESIDENTS, scaleApplianceForHousehold } from "./scaling.js";
 import type {
   Appliance,
   AppliancePreset,
   ApplianceSource,
   CalculationMode,
+  EnergyMode,
   HeatingSettings,
   LegacyAppliance,
   LegacySimulatorState,
@@ -17,7 +17,7 @@ import type {
 } from "./types.js";
 
 export const STATE_STORAGE_KEY = "hphc-simulator-state";
-export const CURRENT_STATE_VERSION = 7;
+export const CURRENT_STATE_VERSION = 8;
 
 type StorageReader = Pick<Storage, "getItem">;
 type StorageWriter = Pick<Storage, "setItem">;
@@ -25,6 +25,7 @@ type StorageWriter = Pick<Storage, "setItem">;
 const isFiniteNonNegative = (value: unknown): value is number => Number.isFinite(value) && Number(value) >= 0;
 const validTime = (value: unknown): value is string => typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 const validCalculationMode = (value: unknown): value is CalculationMode => value === "reference" || value === "detailed" || value === "measured";
+const validEnergyMode = (value: unknown): value is EnergyMode => value === "known-total" || value === "projected";
 const validSourceKind = (value: unknown): value is SourceKind => value === "internal" || value === "official" || value === "user";
 
 function cloneSource(source: ApplianceSource) {
@@ -157,32 +158,6 @@ function migrateAppliances(
   });
 }
 
-function refreshCalibratedReferences(
-  appliances: Appliance[],
-  presets: AppliancePreset[],
-  annualKwh: number,
-  residents: number,
-) {
-  return appliances.map((appliance) => {
-    if (appliance.calculationMode !== "reference") return appliance;
-    const preset = presets.find((candidate) => candidate.type === appliance.type);
-    if (!preset) return appliance;
-    return scaleApplianceForHousehold({
-      ...appliance,
-      annualKwh: preset.annualKwh,
-      lowKwh: preset.lowKwh,
-      highKwh: preset.highKwh,
-      source: cloneSource(preset.source),
-    }, {
-      annualKwh: 4500,
-      residents: REFERENCE_RESIDENTS,
-    }, {
-      annualKwh,
-      residents,
-    });
-  });
-}
-
 function migrateWindows(value: unknown, fallback: OffPeakWindow[]) {
   if (!Array.isArray(value)) return fallback.map((window) => ({ ...window }));
   const windows = value.flatMap((candidate, index) => {
@@ -221,15 +196,19 @@ export function migrateSimulationState(
     ? Math.min(12, Math.round(state.residents))
     : defaults.residents;
   const migratedAppliances = migrateAppliances(state, defaults.appliances, presets, annualKwh);
-  const appliances = Number(state.version ?? 0) < CURRENT_STATE_VERSION
-    ? refreshCalibratedReferences(migratedAppliances, presets, annualKwh, residents)
-    : migratedAppliances;
+  const appliances = migratedAppliances;
+  const energyMode = validEnergyMode(state.energyMode) ? state.energyMode : "known-total";
+  const defaultProjectedBackground = Math.max(0, annualKwh - appliances.reduce((sum, appliance) => sum + appliance.annualKwh, 0));
 
   return {
     version: CURRENT_STATE_VERSION,
     tariffs,
     power,
     annualKwh,
+    energyMode,
+    projectedBackgroundKwh: isFiniteNonNegative(state.projectedBackgroundKwh)
+      ? state.projectedBackgroundKwh
+      : defaultProjectedBackground,
     residents,
     backgroundHcShare: Number.isFinite(state.backgroundHcShare)
       ? clamp(Number(state.backgroundHcShare), 0, 100)
