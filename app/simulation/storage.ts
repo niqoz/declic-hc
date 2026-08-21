@@ -14,7 +14,7 @@ import type {
 } from "./types.js";
 
 export const STATE_STORAGE_KEY = "hphc-simulator-state";
-export const CURRENT_STATE_VERSION = 3;
+export const CURRENT_STATE_VERSION = 4;
 
 type StorageReader = Pick<Storage, "getItem">;
 type StorageWriter = Pick<Storage, "setItem">;
@@ -78,7 +78,6 @@ function sanitizeCurrentAppliance(candidate: LegacyAppliance, index: number, mat
   const annualKwh = candidate.annualKwh;
   const lowKwh = isFiniteNonNegative(candidate.lowKwh) ? Math.min(candidate.lowKwh, annualKwh) : annualKwh;
   const highKwh = isFiniteNonNegative(candidate.highKwh) ? Math.max(candidate.highKwh, annualKwh) : annualKwh;
-  const shiftableShare = clamp(Number(candidate.shiftableShare), 0, 100);
   return {
     id: Number.isFinite(candidate.id) ? Number(candidate.id) : index + 1,
     type: typeof candidate.type === "string" && candidate.type ? candidate.type : matchingPreset?.type ?? "custom",
@@ -87,8 +86,8 @@ function sanitizeCurrentAppliance(candidate: LegacyAppliance, index: number, mat
     lowKwh,
     highKwh,
     calculationMode: validCalculationMode(candidate.calculationMode) ? candidate.calculationMode : "reference",
-    shiftableShare,
-    offPeakShare: clamp(Number(candidate.offPeakShare), 0, shiftableShare),
+    shiftableShare: 100,
+    offPeakShare: 100,
     source: sanitizeSource(candidate.source, matchingPreset?.source ?? INTERNAL_ESTIMATE_SOURCE),
   };
 }
@@ -112,8 +111,6 @@ function migrateLegacyAppliance(
   const presetScale = matchingPreset && matchingPreset.annualKwh > 0 ? centralKwh / matchingPreset.annualKwh : 1;
   const lowKwh = matchingPreset ? matchingPreset.lowKwh * presetScale : centralKwh * 0.7;
   const highKwh = matchingPreset ? matchingPreset.highKwh * presetScale : centralKwh * 1.3;
-  const shiftableShare = matchingPreset?.shiftableShare ?? 100;
-
   return {
     id: Number.isFinite(candidate.id) ? Number(candidate.id) : index + 1,
     type: matchingPreset?.type ?? "custom",
@@ -122,8 +119,8 @@ function migrateLegacyAppliance(
     lowKwh,
     highKwh,
     calculationMode: "reference",
-    shiftableShare,
-    offPeakShare: candidate.inOffPeak ? shiftableShare : 0,
+    shiftableShare: 100,
+    offPeakShare: 100,
     source: cloneSource(matchingPreset?.source ?? INTERNAL_ESTIMATE_SOURCE),
   } satisfies Appliance;
 }
@@ -185,6 +182,9 @@ export function migrateSimulationState(
     tariffs,
     power,
     annualKwh,
+    residents: isFiniteNonNegative(state.residents) && state.residents >= 1
+      ? Math.min(12, Math.round(state.residents))
+      : defaults.residents,
     backgroundHcShare: Number.isFinite(state.backgroundHcShare)
       ? clamp(Number(state.backgroundHcShare), 0, 100)
       : defaults.backgroundHcShare,

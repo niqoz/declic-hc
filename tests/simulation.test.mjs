@@ -10,6 +10,7 @@ import {
   calculateSimulation,
 } from "../.test-dist/calculate.js";
 import { APPLIANCE_PRESETS, DEFAULT_APPLIANCES } from "../.test-dist/presets.js";
+import { scaleAppliancesForHousehold } from "../.test-dist/scaling.js";
 import {
   CURRENT_STATE_VERSION,
   loadSimulationState,
@@ -32,6 +33,7 @@ const defaultState = {
   tariffs: [tariff],
   power: 6,
   annualKwh: 4500,
+  residents: 2,
   backgroundHcShare: 25,
   appliances,
   offPeakWindows: [{ id: 1, start: "21:40", end: "05:40" }],
@@ -53,22 +55,19 @@ test("reproduit le scénario central de l'interface", () => {
   closeTo(result.declaredApplianceKwh, 1580);
   closeTo(result.declaredShiftableKwh, 1580);
   closeTo(result.backgroundKwh, 2920);
-  closeTo(result.scheduledHc, 1200);
-  closeTo(result.hcKwh, 1930);
-  closeTo(result.hpKwh, 2570);
+  closeTo(result.scheduledHc, 1580);
+  closeTo(result.hcKwh, 2310);
+  closeTo(result.hpKwh, 2190);
   closeTo(result.baseCost, 1000.86);
-  closeTo(result.hphcCost, 961.509);
-  closeTo(result.delta, 39.351);
+  closeTo(result.hphcCost, 942.243);
+  closeTo(result.delta, 58.617);
   closeTo(result.threshold, 25.64102564102564);
   assert.deepEqual(result.warnings, []);
 });
 
-test("distingue la part déplaçable de la part réellement placée en HC", () => {
+test("place toujours 100 % des consommateurs opportunistes en HC", () => {
   const appliance = { ...appliances[0], shiftableShare: 80, offPeakShare: 50 };
-  closeTo(calculateApplianceOffPeakKwh(appliance), 600);
-
-  const invalid = { ...appliance, offPeakShare: 95 };
-  closeTo(calculateApplianceOffPeakKwh(invalid), 960);
+  closeTo(calculateApplianceOffPeakKwh(appliance), 1200);
 });
 
 test("préserve toujours le bilan énergétique et plafonne les usages", () => {
@@ -86,15 +85,24 @@ test("préserve toujours le bilan énergétique et plafonne les usages", () => {
   assert.equal(result.warnings[0].code, "APPLIANCES_EXCEED_TOTAL");
 });
 
-test("la consommation annuelle des appareils reste absolue quand le foyer change", () => {
-  const initial = calculateSimulation({ annualKwh: 4500, backgroundHcShare: 25, tariff, appliances });
-  const raised = calculateSimulation({ annualKwh: 10000, backgroundHcShare: 25, tariff, appliances });
-  const restored = calculateSimulation({ annualKwh: 4500, backgroundHcShare: 25, tariff, appliances });
+test("fait évoluer les usages liés au foyer avec les kWh et les habitants", () => {
+  const raised = scaleAppliancesForHousehold(
+    appliances,
+    { annualKwh: 4500, residents: 2 },
+    { annualKwh: 10000, residents: 4 },
+  );
 
-  assert.equal(initial.declaredApplianceKwh, 1580);
-  assert.equal(raised.declaredApplianceKwh, 1580);
-  assert.equal(restored.declaredApplianceKwh, 1580);
-  assert.deepEqual(appliances.map((appliance) => appliance.annualKwh), [1200, 160, 220]);
+  assert.ok(raised[0].annualKwh > appliances[0].annualKwh);
+  assert.ok(raised[1].annualKwh > appliances[1].annualKwh);
+  assert.ok(raised[2].annualKwh > appliances[2].annualKwh);
+  assert.ok(raised.every((appliance) => appliance.offPeakShare === 100 && appliance.shiftableShare === 100));
+
+  const measured = scaleAppliancesForHousehold(
+    [{ ...appliances[0], calculationMode: "measured", annualKwh: 1350 }],
+    { annualKwh: 4500, residents: 2 },
+    { annualKwh: 10000, residents: 4 },
+  );
+  assert.equal(measured[0].annualKwh, 1350);
 });
 
 test("gère une consommation nulle sans produire de valeur invalide", () => {
@@ -143,6 +151,7 @@ test("fige à sa valeur affichée un ancien appareil proportionnel", () => {
   assert.equal(migrated.appliances[0].lowKwh, 1440);
   assert.equal(migrated.appliances[0].highKwh, 2560);
   assert.equal(migrated.appliances[0].offPeakShare, 100);
+  assert.equal(migrated.residents, 2);
 
   const afterHouseholdChange = calculateSimulation({ annualKwh: 10000, backgroundHcShare: 25, tariff, appliances: migrated.appliances });
   assert.equal(afterHouseholdChange.declaredApplianceKwh, 1920);
@@ -186,7 +195,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.2.0");
+  assert.equal(version, "0.3.0");
   assert.match(pageSource, /v\{APP_VERSION\}/);
   assert.equal(JSON.parse(manifestSource).version, version);
   assert.match(serviceWorkerSource, new RegExp(`declic-hc-v${version?.replaceAll(".", "\\.")}`));

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   calculateSimulation,
   clamp,
@@ -16,6 +16,12 @@ import {
   loadSimulationState,
   saveSimulationState,
 } from "./simulation/storage";
+import {
+  householdScaleFactor,
+  REFERENCE_RESIDENTS,
+  scaleApplianceForHousehold,
+  scaleAppliancesForHousehold,
+} from "./simulation/scaling";
 import type {
   Appliance,
   AppliancePreset,
@@ -77,6 +83,7 @@ const DEFAULT_SIMULATOR_STATE: SimulatorState = {
   tariffs: DEFAULT_TARIFFS,
   power: 6,
   annualKwh: HOUSEHOLD_REFERENCE_KWH,
+  residents: REFERENCE_RESIDENTS,
   backgroundHcShare: 25,
   appliances: DEFAULT_APPLIANCES,
   offPeakWindows: DEFAULT_HC_WINDOWS,
@@ -87,6 +94,10 @@ export default function Home() {
   const [tariffs, setTariffs] = useState<Tariff[]>(DEFAULT_TARIFFS);
   const [power, setPower] = useState(6);
   const [annualKwh, setAnnualKwh] = useState(4500);
+  const [residents, setResidents] = useState(REFERENCE_RESIDENTS);
+  const annualKwhRef = useRef(4500);
+  const residentsRef = useRef(REFERENCE_RESIDENTS);
+  const nextApplianceIdRef = useRef(1000);
   const [backgroundHcShare, setBackgroundHcShare] = useState(25);
   const [appliances, setAppliances] = useState<Appliance[]>(DEFAULT_APPLIANCES);
   const [tariffsOpen, setTariffsOpen] = useState(false);
@@ -106,8 +117,12 @@ export default function Home() {
     setTariffs(state.tariffs);
     setPower(state.power);
     setAnnualKwh(state.annualKwh);
+    annualKwhRef.current = state.annualKwh;
+    setResidents(state.residents);
+    residentsRef.current = state.residents;
     setBackgroundHcShare(state.backgroundHcShare);
     setAppliances(state.appliances);
+    nextApplianceIdRef.current = Math.max(1000, ...state.appliances.map((appliance) => appliance.id + 1));
     setOffPeakWindows(state.offPeakWindows);
     setActiveOffPeakWindowId(state.activeOffPeakWindowId);
     setStorageReady(true);
@@ -140,8 +155,8 @@ export default function Home() {
 
   useEffect(() => {
     if (!storageReady) return;
-    saveSimulationState(localStorage, { tariffs, power, annualKwh, backgroundHcShare, appliances, offPeakWindows, activeOffPeakWindowId });
-  }, [storageReady, tariffs, power, annualKwh, backgroundHcShare, appliances, offPeakWindows, activeOffPeakWindowId]);
+    saveSimulationState(localStorage, { tariffs, power, annualKwh, residents, backgroundHcShare, appliances, offPeakWindows, activeOffPeakWindowId });
+  }, [storageReady, tariffs, power, annualKwh, residents, backgroundHcShare, appliances, offPeakWindows, activeOffPeakWindowId]);
 
   useEffect(() => {
     // Une plage active supprimée doit immédiatement basculer vers la première plage restante.
@@ -162,6 +177,24 @@ export default function Home() {
 
   function updateAppliance(id: number, patch: Partial<Appliance>) {
     setAppliances((current) => current.map((appliance) => appliance.id === id ? { ...appliance, ...patch } : appliance));
+  }
+
+  function updateAnnualKwh(value: number) {
+    const nextAnnualKwh = Math.max(0, value);
+    const from = { annualKwh: annualKwhRef.current, residents: residentsRef.current };
+    const to = { annualKwh: nextAnnualKwh, residents: residentsRef.current };
+    annualKwhRef.current = nextAnnualKwh;
+    setAnnualKwh(nextAnnualKwh);
+    setAppliances((current) => scaleAppliancesForHousehold(current, from, to));
+  }
+
+  function updateResidents(value: number) {
+    const nextResidents = Math.min(12, Math.max(1, Math.round(value || 1)));
+    const from = { annualKwh: annualKwhRef.current, residents: residentsRef.current };
+    const to = { annualKwh: annualKwhRef.current, residents: nextResidents };
+    residentsRef.current = nextResidents;
+    setResidents(nextResidents);
+    setAppliances((current) => scaleAppliancesForHousehold(current, from, to));
   }
 
   function updateApplianceKwh(id: number, annualKwhValue: number) {
@@ -191,8 +224,8 @@ export default function Home() {
       defaultOffPeakShare: 100,
       source: { ...INTERNAL_ESTIMATE_SOURCE },
     };
-    setAppliances((current) => [...current, {
-      id: Date.now() + Math.random(),
+    const appliance = scaleApplianceForHousehold({
+      id: nextApplianceIdRef.current++,
       type: model.type,
       name: model.name,
       annualKwh: model.annualKwh,
@@ -200,9 +233,16 @@ export default function Home() {
       highKwh: model.highKwh,
       calculationMode: model.calculationMode,
       shiftableShare: model.shiftableShare,
-      offPeakShare: model.defaultOffPeakShare,
+      offPeakShare: 100,
       source: { ...model.source },
-    }]);
+    }, {
+      annualKwh: HOUSEHOLD_REFERENCE_KWH,
+      residents: REFERENCE_RESIDENTS,
+    }, {
+      annualKwh,
+      residents,
+    });
+    setAppliances((current) => [...current, appliance]);
   }
 
   function updateCalculationMode(id: number, mode: CalculationMode) {
@@ -218,11 +258,18 @@ export default function Home() {
       return;
     }
     const preset = APPLIANCE_PRESETS.find((candidate) => candidate.type === appliance.type);
-    const scale = preset && preset.annualKwh > 0 ? appliance.annualKwh / preset.annualKwh : 1;
+    const contextFactor = preset ? householdScaleFactor(preset.type, {
+      annualKwh: HOUSEHOLD_REFERENCE_KWH,
+      residents: REFERENCE_RESIDENTS,
+    }, { annualKwh, residents }) : 1;
+    const contextAnnualKwh = preset ? preset.annualKwh * contextFactor : appliance.annualKwh;
+    const scale = contextAnnualKwh > 0 ? appliance.annualKwh / contextAnnualKwh : 1;
     updateAppliance(id, {
       calculationMode: mode,
-      lowKwh: preset ? preset.lowKwh * scale : appliance.annualKwh * 0.7,
-      highKwh: preset ? preset.highKwh * scale : appliance.annualKwh * 1.3,
+      lowKwh: preset ? preset.lowKwh * contextFactor * scale : appliance.annualKwh * 0.7,
+      highKwh: preset ? preset.highKwh * contextFactor * scale : appliance.annualKwh * 1.3,
+      shiftableShare: 100,
+      offPeakShare: 100,
       source: { ...(preset?.source ?? INTERNAL_ESTIMATE_SOURCE) },
     });
   }
@@ -321,12 +368,13 @@ export default function Home() {
           <section className="panel setup-panel">
             <div className="step-heading"><span>01</span><div><p>VOTRE FOYER</p><h2>Posons le décor</h2></div></div>
             <div className="two-fields">
-              <label>Consommation annuelle<div className="input-wrap"><input type="number" min="0" step="100" value={annualKwh} onChange={(e) => setAnnualKwh(Math.max(0, Number(e.target.value)))} /><span>kWh/an</span></div></label>
+              <label>Consommation annuelle<div className="input-wrap"><input type="number" min="0" step="100" value={annualKwh} onChange={(e) => updateAnnualKwh(Number(e.target.value))} /><span>kWh/an</span></div></label>
+              <label>Habitants<div className="input-wrap"><input aria-label="Nombre d’habitants" type="number" min="1" max="12" step="1" value={residents} onChange={(e) => updateResidents(Number(e.target.value))} /><span>pers.</span></div></label>
               <label>Puissance du compteur<select value={power} onChange={(e) => setPower(Number(e.target.value))}>{tariffs.map((tariff) => <option key={tariff.power} value={tariff.power}>{tariff.power} kVA</option>)}</select></label>
             </div>
             <label className="annual-slider">
               <span>Ajuster la consommation <strong>{number.format(annualKwh)} kWh/an</strong></span>
-              <input aria-label="Consommation annuelle en kilowattheures" type="range" min="0" max={annualSliderMax} step="100" value={annualKwh} onInput={(e) => setAnnualKwh(Number(e.currentTarget.value))} />
+              <input aria-label="Consommation annuelle en kilowattheures" type="range" min="0" max={annualSliderMax} step="100" value={annualKwh} onInput={(e) => updateAnnualKwh(Number(e.currentTarget.value))} />
               <small><span>0 kWh</span><span>{number.format(annualSliderMax)} kWh</span></small>
             </label>
             <label className="range-label"><span>Répartition totale en heures creuses <strong>{results.share.toFixed(0)} %</strong></span><input type="range" min={results.minShare} max={results.maxShare} step="1" value={results.share} disabled={results.backgroundKwh <= 0} onInput={(e) => setTotalHcShare(Number(e.currentTarget.value))} /></label>
@@ -336,12 +384,12 @@ export default function Home() {
 
           <section className="panel appliance-panel">
             <div className="step-heading"><span>02</span><div><p>USAGES FLEXIBLES</p><h2>À vous de les décaler</h2></div></div>
-            <div className="behavior-guide"><span><strong>Consommations absolues</strong>Modifier la consommation du foyer ne redimensionne plus les appareils. Chaque usage conserve sa propre valeur annuelle.</span><div className="usage-balance"><b>{number.format(results.declaredApplianceKwh)} kWh</b><small>usages listés</small><b>{number.format(results.backgroundKwh)} kWh</b><small>reste du foyer</small></div></div>
+            <div className="behavior-guide"><span><strong>Courbe adaptée au foyer</strong>Les usages liés au ménage évoluent avec {residents} habitant{residents > 1 ? "s" : ""} et les kWh annuels. Véhicule, piscine et climatisation restent indépendants.</span><div className="usage-balance"><b>{number.format(results.declaredApplianceKwh)} kWh</b><small>usages listés</small><b>{number.format(results.backgroundKwh)} kWh</b><small>reste du foyer</small></div></div>
             <div className="appliance-list">{appliances.map((appliance) => <article className="appliance" key={appliance.id}>
               <button className="remove" aria-label={`Retirer ${appliance.name}`} onClick={() => setAppliances((current) => current.filter((item) => item.id !== appliance.id))}>×</button>
               <div className="appliance-identity"><input className="appliance-name" aria-label="Nom de l’usage" value={appliance.name} onChange={(e) => updateAppliance(appliance.id, { name: e.target.value })} /><span className={`behavior-toggle ${appliance.calculationMode}`}><i />{appliance.calculationMode === "measured" ? "Valeur mesurée" : appliance.calculationMode === "detailed" ? "Calcul détaillé" : "Valeur de référence"}</span></div>
               <div className="appliance-energy"><input aria-label={`Consommation annuelle de ${appliance.name}`} type="number" min="0" step="10" value={Math.round(appliance.annualKwh)} onChange={(e) => updateApplianceKwh(appliance.id, Number(e.target.value))} /><span>kWh/an</span></div>
-              <button className={`schedule ${appliance.offPeakShare > 0 ? "scheduled" : ""}`} onClick={() => updateAppliance(appliance.id, { offPeakShare: appliance.offPeakShare > 0 ? 0 : appliance.shiftableShare })}><span className="schedule-icon">{appliance.offPeakShare > 0 ? "☾" : "☀"}</span><span><small>{appliance.offPeakShare > 0 ? `${appliance.offPeakShare.toFixed(0)} % DE L’USAGE EN HC` : "NON PROGRAMMÉ EN HC"}</small>{appliance.offPeakShare > 0 ? `${formatTime(activeOffPeakWindow.start)}–${formatTime(activeOffPeakWindow.end)}` : "Basculer vers les HC"}</span><i /></button>
+              <div className="schedule scheduled"><span className="schedule-icon">☾</span><span><small>100 % DE L’USAGE EN HC</small>{formatTime(activeOffPeakWindow.start)}–{formatTime(activeOffPeakWindow.end)}</span><i aria-hidden="true" /></div>
               <details className="appliance-assumptions">
                 <summary>Hypothèses, flexibilité et source <b>{number.format(appliance.lowKwh)}–{number.format(appliance.highKwh)} kWh/an</b></summary>
                 <div className="assumption-grid">
@@ -349,8 +397,7 @@ export default function Home() {
                   <label>Estimation basse<div className="compact-input"><input type="number" min="0" step="10" disabled={appliance.calculationMode === "measured"} value={Math.round(appliance.lowKwh)} onChange={(event) => updateAppliance(appliance.id, { lowKwh: clamp(Number(event.target.value), 0, appliance.annualKwh) })} /><span>kWh</span></div></label>
                   <label>Estimation haute<div className="compact-input"><input type="number" min={appliance.annualKwh} step="10" disabled={appliance.calculationMode === "measured"} value={Math.round(appliance.highKwh)} onChange={(event) => updateAppliance(appliance.id, { highKwh: Math.max(appliance.annualKwh, Number(event.target.value)) })} /><span>kWh</span></div></label>
                 </div>
-                <label className="assumption-range"><span>Part déplaçable <strong>{appliance.shiftableShare.toFixed(0)} %</strong></span><input type="range" min="0" max="100" step="1" value={appliance.shiftableShare} onInput={(event) => { const shiftableShare = Number(event.currentTarget.value); updateAppliance(appliance.id, { shiftableShare, offPeakShare: Math.min(appliance.offPeakShare, shiftableShare) }); }} /></label>
-                <label className="assumption-range"><span>Part réellement placée en HC <strong>{appliance.offPeakShare.toFixed(0)} %</strong></span><input type="range" min="0" max={appliance.shiftableShare} step="1" value={appliance.offPeakShare} disabled={appliance.shiftableShare === 0} onInput={(event) => updateAppliance(appliance.id, { offPeakShare: Number(event.currentTarget.value) })} /></label>
+                <p className="offpeak-assumption"><strong>Placement retenu :</strong> 100 % de cet usage opportuniste pendant les heures creuses.</p>
                 <p className={`appliance-source ${appliance.source.kind}`}>Source : <strong>{appliance.source.organization}</strong> — {appliance.source.label}{appliance.source.year ? ` (${appliance.source.year})` : ""}{appliance.source.url && <> · <a href={appliance.source.url} target="_blank" rel="noreferrer">consulter</a></>}</p>
               </details>
             </article>)}</div>
@@ -360,7 +407,7 @@ export default function Home() {
               <div className="preset-grid">
                 {APPLIANCE_PRESETS.map((preset) => <button type="button" key={preset.name} onClick={() => addAppliance(preset)}>
                   <span className="preset-icon">{preset.icon}</span>
-                  <span><strong>{preset.name}</strong><small>{preset.detail} · {number.format(preset.annualKwh)} kWh/an · plage {number.format(preset.lowKwh)}–{number.format(preset.highKwh)}</small></span>
+                  <span><strong>{preset.name}</strong><small>{preset.detail} · référence {REFERENCE_RESIDENTS} pers. · {number.format(preset.annualKwh)} kWh/an</small></span>
                   <b>＋</b>
                 </button>)}
               </div>

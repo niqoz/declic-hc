@@ -18,10 +18,7 @@ function nonNegative(value: number) {
 }
 
 export function calculateApplianceOffPeakKwh(appliance: Appliance) {
-  const annualKwh = nonNegative(appliance.annualKwh);
-  const shiftableShare = clamp(appliance.shiftableShare, 0, 100);
-  const offPeakShare = clamp(appliance.offPeakShare, 0, shiftableShare);
-  return annualKwh * offPeakShare / 100;
+  return nonNegative(appliance.annualKwh);
 }
 
 export function calculateEnergyDistribution(
@@ -36,10 +33,7 @@ export function calculateEnergyDistribution(
   const applianceScale = declaredApplianceKwh > safeAnnualKwh && declaredApplianceKwh > 0
     ? safeAnnualKwh / declaredApplianceKwh
     : 1;
-  const declaredShiftableKwh = appliances.reduce(
-    (sum, appliance) => sum + nonNegative(appliance.annualKwh) * clamp(appliance.shiftableShare, 0, 100) / 100,
-    0,
-  );
+  const declaredShiftableKwh = declaredApplianceKwh;
   const shiftableKwh = declaredShiftableKwh * applianceScale;
   const backgroundKwh = Math.max(0, safeAnnualKwh - applianceKwh);
   const backgroundHc = backgroundKwh * safeBackgroundHcShare / 100;
@@ -120,7 +114,7 @@ export function validateSimulationInput(input: SimulationInput, declaredApplianc
   if (
     input.backgroundHcShare < 0
     || input.backgroundHcShare > 100
-    || input.appliances.some((appliance) => appliance.shiftableShare > 100 || appliance.offPeakShare > appliance.shiftableShare)
+    || input.appliances.some((appliance) => appliance.shiftableShare > 100 || appliance.offPeakShare > 100)
   ) {
     if (!warnings.some((warning) => warning.code === "INVALID_INPUT")) {
       warnings.push({

@@ -2,8 +2,10 @@ import type { Appliance, AppliancePreset, ApplianceSource } from "./types.js";
 
 export const INTERNAL_ESTIMATE_SOURCE: ApplianceSource = {
   kind: "internal",
-  organization: "Déclic HC",
-  label: "Estimation interne indicative — source officielle à intégrer au lot 3",
+  organization: "ADEME / ElecDom + Déclic HC",
+  label: "Ordre de grandeur ADEME, courbe foyer indicative",
+  year: 2022,
+  url: "https://data.ademe.fr/datasets/elecdom-donnees-de-consommation-annuelle",
 };
 
 const source = () => ({ ...INTERNAL_ESTIMATE_SOURCE });
@@ -37,6 +39,6 @@ function applianceFromPreset(name: string, id: number, offPeakShare: number): Ap
 
 export const DEFAULT_APPLIANCES: Appliance[] = [
   applianceFromPreset("Chauffe-eau", 1, 100),
-  applianceFromPreset("Lave-linge", 2, 0),
-  applianceFromPreset("Lave-vaisselle", 3, 0),
+  applianceFromPreset("Lave-linge", 2, 100),
+  applianceFromPreset("Lave-vaisselle", 3, 100),
 ];

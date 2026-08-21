@@ -92,6 +92,7 @@ export type SimulatorState = {
   tariffs: Tariff[];
   power: number;
   annualKwh: number;
+  residents: number;
   backgroundHcShare: number;
   appliances: Appliance[];
   offPeakWindows: OffPeakWindow[];
