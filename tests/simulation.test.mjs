@@ -10,6 +10,7 @@ import {
 } from "../.test-dist/calculate.js";
 import { APPLIANCE_PRESETS, DEFAULT_APPLIANCES } from "../.test-dist/presets.js";
 import { ELECDOM_DATA_QUALITY, getApplianceCalibration } from "../.test-dist/calibration.js";
+import { estimateCoolingHcShare } from "../.test-dist/cooling.js";
 import {
   estimateHeating,
   isValidOffPeakWindow,
@@ -267,6 +268,24 @@ test("maintient des plages HC de huit heures et neutralise les plages invalides"
   assert.equal(estimateHeating({ ...defaultState.heating, enabled: true }, { id: 2, start: "22:00", end: "22:00" }).hcShare, 0);
 });
 
+test("répartit la climatisation estivale selon la présence diurne", () => {
+  const window = { id: 1, start: "21:40", end: "05:40" };
+  const away = estimateCoolingHcShare("away", window);
+  const mixed = estimateCoolingHcShare("mixed", window);
+  const home = estimateCoolingHcShare("home", window);
+
+  closeTo(away, 5.1852, 0.001);
+  closeTo(mixed, 4.2424, 0.001);
+  closeTo(home, 3.3333, 0.001);
+  assert.ok(away > mixed && mixed > home);
+  assert.equal(estimateCoolingHcShare("home", { id: 2, start: "23:45", end: "07:45" }), 0);
+
+  const cooling = { ...APPLIANCE_PRESETS.find((preset) => preset.type === "air-conditioning"), id: 99, hcShare: away };
+  const result = calculateSimulation({ annualKwh: 1000, backgroundHcShare: 0, tariff, appliances: [cooling] });
+  closeTo(result.scheduledHc, cooling.annualKwh * away / 100);
+  assert.ok(result.scheduledHc < cooling.annualKwh, "la climatisation ne doit plus être placée à 100 % en HC");
+});
+
 test("sauvegarde une version explicite et recharge le même état", () => {
   const values = new Map();
   const storage = {
@@ -474,7 +493,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.8.0");
+  assert.equal(version, "0.8.1");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);

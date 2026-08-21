@@ -26,6 +26,7 @@ export type Appliance = {
   annualKwh: number;
   lowKwh: number;
   highKwh: number;
+  hcShare?: number;
   calculationMode: CalculationMode;
   source: ApplianceSource;
 };

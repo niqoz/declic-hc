@@ -7,6 +7,7 @@ import {
   HOUSEHOLD_REFERENCE_KWH,
 } from "./simulation/calculate";
 import { confidenceLabel, getApplianceCalibration } from "./simulation/calibration";
+import { estimateCoolingHcShare } from "./simulation/cooling";
 import { estimateHeating, offPeakDurationMinutes, updateOffPeakWindowTime } from "./simulation/heating";
 import {
   APPLIANCE_PRESETS,
@@ -206,9 +207,19 @@ export default function Home() {
   const activeTariff = tariffs.find((tariff) => tariff.power === power) ?? tariffs[0];
   const activeOffPeakWindow = offPeakWindows.find((window) => window.id === activeOffPeakWindowId) ?? offPeakWindows[0];
   const heatingEstimate = useMemo(() => estimateHeating(heating, activeOffPeakWindow), [activeOffPeakWindow, heating]);
+  const coolingHcShare = useMemo(
+    () => estimateCoolingHcShare(heating.occupancy, activeOffPeakWindow),
+    [activeOffPeakWindow, heating.occupancy],
+  );
+  const modeledAppliances = useMemo(
+    () => appliances.map((appliance) => appliance.type === "air-conditioning"
+      ? { ...appliance, hcShare: coolingHcShare }
+      : appliance),
+    [appliances, coolingHcShare],
+  );
   const results = useMemo(
-    () => calculateSimulation({ annualKwh, backgroundHcShare, tariff: activeTariff, appliances, heating: heatingEstimate }),
-    [activeTariff, annualKwh, appliances, backgroundHcShare, heatingEstimate],
+    () => calculateSimulation({ annualKwh, backgroundHcShare, tariff: activeTariff, appliances: modeledAppliances, heating: heatingEstimate }),
+    [activeTariff, annualKwh, backgroundHcShare, heatingEstimate, modeledAppliances],
   );
 
   function updateHeating(patch: Partial<HeatingSettings>) {
@@ -521,6 +532,7 @@ export default function Home() {
                 <ThumbOnlyRange aria-label="Puissance du compteur" min={0} max={Math.max(0, tariffs.length - 1)} step={1} value={powerSliderIndex} onValueChange={(index) => setPower(tariffs[Math.round(index)]?.power ?? power)} />
                 <small><span>{tariffs[0]?.power ?? power} kVA</span><span>{tariffs.at(-1)?.power ?? power} kVA</span></small>
               </label>
+              <label className="household-occupancy"><span>Présence dans le logement</span><select value={heating.occupancy} onChange={(event) => updateHeating({ occupancy: event.target.value as HeatingSettings["occupancy"] })}><option value="away">Absent en journée</option><option value="mixed">Mixte · 2 jours de télétravail</option><option value="home">Télétravail / présent</option></select><small>Utilisée pour les profils de chauffage et de climatisation estivale.</small></label>
             </div>
             <section className={`heating-card ${heating.enabled ? "enabled" : ""}`}>
               <div className="heating-heading">
@@ -538,7 +550,6 @@ export default function Home() {
                   <label>Logement<select value={heating.dwellingType} onChange={(event) => updateHeating({ dwellingType: event.target.value as HeatingSettings["dwellingType"] })}><option value="apartment">Appartement</option><option value="house">Maison</option></select></label>
                   <label>Isolation<select value={heating.insulation} onChange={(event) => updateHeating({ insulation: event.target.value as HeatingSettings["insulation"] })}><option value="good">Bonne</option><option value="standard">Standard</option><option value="poor">Faible</option></select></label>
                   <label>Altitude<select value={heating.altitude} onChange={(event) => updateHeating({ altitude: event.target.value as HeatingSettings["altitude"] })}><option value="low">Moins de 400 m</option><option value="medium">400 à 800 m</option><option value="high">Plus de 800 m</option></select></label>
-                  <label className="occupancy-field">Occupation<select value={heating.occupancy} onChange={(event) => updateHeating({ occupancy: event.target.value as HeatingSettings["occupancy"] })}><option value="away">Absent en journée</option><option value="mixed">Mixte · 2 jours de télétravail</option><option value="home">Télétravail / présent</option></select></label>
                 </div>
                 <div className="heating-result">
                   <span><small>CHAUFFAGE ESTIMÉ</small><strong>{number.format(heatingEstimate.annualKwh)} kWh/an</strong><em>fourchette {number.format(heatingEstimate.lowKwh)}–{number.format(heatingEstimate.highKwh)} kWh</em></span>
@@ -549,19 +560,20 @@ export default function Home() {
             </section>
             <label className="range-label"><span>Répartition totale en heures creuses <strong>{results.share.toFixed(0)} %</strong></span><ThumbOnlyRange aria-label="Répartition totale en heures creuses" min={results.minShare} max={results.maxShare} step={1} value={results.share} disabled={results.backgroundKwh <= 0} onValueChange={setTotalHcShare} /></label>
             <div className="range-scale"><span>Minimum {results.minShare.toFixed(0)} %</span><span>Maximum {results.maxShare.toFixed(0)} %</span></div>
-            <p className="hint">Commencez le glissement sur la poignée. Le curseur agit sur les usages non listés ; les appareils programmés fixent les limites atteignables.</p>
+            <p className="hint">Commencez le glissement sur la poignée. Le curseur agit sur les usages non listés ; les appareils programmés et les usages profilés fixent les limites atteignables.</p>
           </section>
 
           <section className="panel appliance-panel">
-            <div className="step-heading"><span>02</span><div><p>USAGES FLEXIBLES</p><h2>À vous de les décaler</h2></div></div>
+            <div className="step-heading"><span>02</span><div><p>USAGES PILOTÉS</p><h2>Programmez les bons usages</h2></div></div>
             <div className="behavior-guide"><span><strong>Courbe adaptée au foyer</strong>Les usages liés au ménage évoluent avec {residents} habitant{residents > 1 ? "s" : ""} et la consommation annuelle par habitant. Le chauffage est estimé séparément.</span><div className="usage-balance"><b>{number.format(results.declaredApplianceKwh)} kWh</b><small>usages listés</small><b>{number.format(results.backgroundKwh)} kWh</b><small>reste du foyer</small></div></div>
             <div className="appliance-list">{appliances.map((appliance) => {
               const calibration = getApplianceCalibration(appliance.type);
+              const isSummerCooling = appliance.type === "air-conditioning";
               return <article className="appliance" key={appliance.id}>
               <button className="remove" aria-label={`Retirer ${appliance.name}`} onClick={() => setAppliances((current) => current.filter((item) => item.id !== appliance.id))}>×</button>
               <div className="appliance-identity"><input className="appliance-name" aria-label="Nom de l’usage" value={appliance.name} onChange={(e) => updateAppliance(appliance.id, { name: e.target.value })} /><span className={`behavior-toggle ${appliance.calculationMode}`}><i />{appliance.calculationMode === "measured" ? "Valeur mesurée" : appliance.calculationMode === "detailed" ? "Calcul détaillé" : "Valeur de référence"}</span></div>
               <div className="appliance-energy"><NumericInput aria-label={`Consommation annuelle de ${appliance.name}`} min={0} step={10} value={Math.round(appliance.annualKwh)} onValueChange={(value) => updateApplianceKwh(appliance.id, value)} /><span>kWh/an</span></div>
-              <div className="schedule scheduled"><span className="schedule-icon">☾</span><span><small>TOUJOURS PROGRAMMÉ EN HC</small>{formatTime(activeOffPeakWindow.start)}–{formatTime(activeOffPeakWindow.end)}</span></div>
+              <div className="schedule scheduled"><span className="schedule-icon">{isSummerCooling ? "☀" : "☾"}</span><span><small>{isSummerCooling ? "USAGE ESTIVAL SELON PRÉSENCE" : "TOUJOURS PROGRAMMÉ EN HC"}</small>{isSummerCooling ? `${coolingHcShare.toFixed(0)} % en HC · profil ${heating.occupancy === "away" ? "absent" : heating.occupancy === "mixed" ? "mixte" : "présent"}` : `${formatTime(activeOffPeakWindow.start)}–${formatTime(activeOffPeakWindow.end)}`}</span></div>
               <details className="appliance-assumptions">
                 <summary><span><strong>Ajuster le modèle</strong><small>Fourchette {number.format(appliance.lowKwh)}–{number.format(appliance.highKwh)} kWh/an · méthode et sources</small></span><span className="assumption-summary-action" aria-hidden="true">Réglages <b>⌄</b></span></summary>
                 <div className="assumption-grid">
@@ -569,7 +581,7 @@ export default function Home() {
                   <label>Estimation basse<div className="compact-input"><NumericInput min={0} step={10} disabled={appliance.calculationMode === "measured"} value={Math.round(appliance.lowKwh)} onValueChange={(value) => updateAppliance(appliance.id, { lowKwh: clamp(value, 0, appliance.annualKwh) })} /><span>kWh</span></div></label>
                   <label>Estimation haute<div className="compact-input"><NumericInput min={appliance.annualKwh} step={10} disabled={appliance.calculationMode === "measured"} value={Math.round(appliance.highKwh)} onValueChange={(value) => updateAppliance(appliance.id, { highKwh: Math.max(appliance.annualKwh, value) })} /><span>kWh</span></div></label>
                 </div>
-                <p className="offpeak-assumption"><strong>Placement retenu :</strong> 100 % de cet usage opportuniste pendant les heures creuses.</p>
+                <p className="offpeak-assumption"><strong>Placement retenu :</strong> {isSummerCooling ? <>usage diurne de 12 h à 22 h, limité aux périodes de présence : soirée en semaine pour le profil absent, deux journées de télétravail pour le profil mixte et journée complète pour le profil présent.</> : <>100 % de cet usage opportuniste pendant les heures creuses.</>}</p>
                 {calibration && <p className={`calibration-status ${calibration.confidence}`}><strong>Fiabilité {confidenceLabel(calibration.confidence)}</strong>{calibration.sampleSize > 0 ? <>Échantillon : {calibration.sampleSize} logements · coefficient foyer appliqué {calibration.householdExponent.toFixed(2)} (intervalle 95 % : {calibration.householdExponentCi95[0].toFixed(2)}–{calibration.householdExponentCi95[1].toFixed(2)}).</> : <>Aucune voiture électrique exploitable dans le fichier ouvert.</>} {!calibration.residentCalibrated && calibration.residentExponent > 0 && <em>La correction selon les habitants reste indicative.</em>}</p>}
                 <p className={`appliance-source ${appliance.source.kind}`}>Source : <strong>{appliance.source.organization}</strong> — {appliance.source.label}{appliance.source.year ? ` (${appliance.source.year})` : ""}{appliance.source.url && <> · <a href={appliance.source.url} target="_blank" rel="noreferrer">consulter</a></>}</p>
               </details>

@@ -39,7 +39,8 @@ export function calculateEnergyDistribution(
   const backgroundKwh = Math.max(0, safeAnnualKwh - applianceKwh - heatingKwh);
   const backgroundHc = backgroundKwh * safeBackgroundHcShare / 100;
   const scheduledHc = appliances.reduce(
-    (sum, appliance) => sum + nonNegative(appliance.annualKwh) * applianceScale,
+    (sum, appliance) => sum
+      + nonNegative(appliance.annualKwh) * applianceScale * clamp(appliance.hcShare ?? 100, 0, 100) / 100,
     0,
   );
   const heatingHcShare = clamp(heating.hcShare, 0, 100);
@@ -121,6 +122,7 @@ export function validateSimulationInput(input: SimulationInput, declaredModeledK
       appliance.annualKwh,
       appliance.lowKwh,
       appliance.highKwh,
+      appliance.hcShare ?? 100,
     ]),
   ];
 
@@ -139,6 +141,7 @@ export function validateSimulationInput(input: SimulationInput, declaredModeledK
     }
   }
   if ((input.heating?.hcShare ?? 0) > 100
+    || input.appliances.some((appliance) => appliance.hcShare != null && appliance.hcShare > 100)
     || input.appliances.some((appliance) => appliance.lowKwh > appliance.annualKwh || appliance.highKwh < appliance.annualKwh)
     || (input.heating != null && (input.heating.lowKwh > input.heating.annualKwh || input.heating.highKwh < input.heating.annualKwh))) {
     if (!warnings.some((warning) => warning.code === "INVALID_INPUT")) {

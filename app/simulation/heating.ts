@@ -32,7 +32,7 @@ export function updateOffPeakWindowTime(window: OffPeakWindow, field: "start" | 
     : { ...window, start: minutesToTime(minute - 8 * 60), end: value };
 }
 
-const isOffPeak = (minute: number, window: OffPeakWindow) => {
+export const isMinuteOffPeak = (minute: number, window: OffPeakWindow) => {
   if (!isValidOffPeakWindow(window)) return false;
   const start = timeToMinutes(window.start);
   const end = timeToMinutes(window.end);
@@ -56,7 +56,7 @@ function computeHeatingDemand(profile: OccupancyProfile, window: OffPeakWindow) 
   for (let weekday = 0; weekday < 7; weekday += 1) {
     for (let minute = 0; minute < 1440; minute += 10) {
       const comfort = isComfortPeriod(profile, weekday, minute);
-      const offPeak = isOffPeak(minute, window);
+      const offPeak = isMinuteOffPeak(minute, window);
       if (comfort) {
         if (offPeak) comfortOffPeak++;
         else comfortPeak++;

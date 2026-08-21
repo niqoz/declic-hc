@@ -47,7 +47,7 @@ export const APPLIANCE_PRESETS: AppliancePreset[] = [
   { type: "washing-machine", name: "Lave-linge", annualKwh: washingMachine, lowKwh: washingMachineLow, highKwh: washingMachineHigh, calculationMode: "reference", source: source("washing-machine"), icon: "◉", detail: "Cycles différés" },
   { type: "dishwasher", name: "Lave-vaisselle", annualKwh: dishwasher, lowKwh: dishwasherLow, highKwh: dishwasherHigh, calculationMode: "reference", source: source("dishwasher"), icon: "◇", detail: "Cycles différés" },
   { type: "dryer", name: "Sèche-linge", annualKwh: dryer, lowKwh: dryerLow, highKwh: dryerHigh, calculationMode: "reference", source: source("dryer"), icon: "◎", detail: "Cycles programmables" },
-  { type: "air-conditioning", name: "Climatisation pilotée", annualKwh: 600, lowKwh: 100, highKwh: 800, calculationMode: "reference", source: source("air-conditioning"), icon: "❄", detail: "Préclimatisation" },
+  { type: "air-conditioning", name: "Climatisation pilotée", annualKwh: 600, lowKwh: 100, highKwh: 800, calculationMode: "reference", source: source("air-conditioning"), icon: "❄", detail: "Usage estival selon présence" },
 ];
 
 function applianceFromPreset(name: string, id: number): Appliance {
