@@ -18,6 +18,20 @@ import {
   saveSimulationState,
   STATE_STORAGE_KEY,
 } from "../.test-dist/storage.js";
+import {
+  addProfile,
+  buildExportEnvelope,
+  createSavedProfile,
+  getActiveProfile,
+  loadProfilesStore,
+  migrateFromLegacyState,
+  parseProfileJson,
+  removeProfile,
+  renameProfile,
+  saveProfilesStore,
+  setActiveProfile,
+  upsertProfile,
+} from "../.test-dist/profiles.js";
 
 const tariff = {
   power: 6,
@@ -49,6 +63,9 @@ const defaultState = {
   offPeakWindows: [{ id: 1, start: "21:40", end: "05:40" }],
   activeOffPeakWindowId: 1,
 };
+
+const defaultStateInput = { ...defaultState };
+delete defaultStateInput.version;
 
 const closeTo = (actual, expected, tolerance = 1e-9) => {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} devrait être proche de ${expected}`);
@@ -239,6 +256,122 @@ test("embarque une calibration ElecDom documentée et contrôlée", () => {
   assert.equal(pool.excludedObservations, 1);
 });
 
+test("migre l'ancienne sauvegarde vers un profil nommé", () => {
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  };
+  saveSimulationState(storage, defaultState);
+  assert.ok(values.has(STATE_STORAGE_KEY));
+
+  const store = migrateFromLegacyState(storage, defaultState, APPLIANCE_PRESETS);
+  assert.equal(store.profiles.length, 1);
+  assert.equal(store.profiles[0].name, "Ma simulation");
+  assert.equal(store.activeProfileId, store.profiles[0].id);
+  assert.equal(store.profiles[0].state.annualKwh, defaultState.annualKwh);
+  assert.equal(store.profiles[0].state.power, defaultState.power);
+  assert.ok(!values.has(STATE_STORAGE_KEY));
+});
+
+test("ne migre pas si des profils existent déjà", () => {
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  };
+  saveSimulationState(storage, defaultState);
+  const existing = createSavedProfile("Déjà là", { ...defaultState, annualKwh: 9999 });
+  const preStore = { version: 1, profiles: [existing], activeProfileId: existing.id };
+  saveProfilesStore(storage, preStore);
+
+  const store = migrateFromLegacyState(storage, defaultState, APPLIANCE_PRESETS);
+  assert.equal(store.profiles.length, 1);
+  assert.equal(store.profiles[0].name, "Déjà là");
+  assert.equal(store.profiles[0].state.annualKwh, 9999);
+});
+
+test("ajoute, renomme et supprime des profils", () => {
+  const stateInput = defaultStateInput;
+  const empty = { version: 1, profiles: [], activeProfileId: null };
+
+  const { store: withFirst, profile: first } = addProfile(empty, "Profil A", stateInput);
+  assert.equal(withFirst.profiles.length, 1);
+  assert.equal(withFirst.activeProfileId, first.id);
+
+  const { store: withTwo, profile: second } = addProfile(withFirst, "Profil B", { ...stateInput, annualKwh: 8000 });
+  assert.equal(withTwo.profiles.length, 2);
+  assert.equal(withTwo.activeProfileId, second.id);
+
+  const renamed = renameProfile(withTwo, first.id, "Profil A renommé");
+  assert.equal(renamed.profiles.find((p) => p.id === first.id).name, "Profil A renommé");
+
+  const afterDelete = removeProfile(renamed, second.id);
+  assert.equal(afterDelete.profiles.length, 1);
+  assert.equal(afterDelete.activeProfileId, first.id);
+});
+
+test("bascule le profil actif et met à jour l'état", () => {
+  const stateInput = defaultStateInput;
+  const empty = { version: 1, profiles: [], activeProfileId: null };
+  const { store: withTwo, profile: second } = addProfile(
+    addProfile(empty, "A", stateInput).store,
+    "B",
+    { ...stateInput, annualKwh: 7000 },
+  );
+
+  const switched = setActiveProfile(withTwo, second.id);
+  assert.equal(switched.activeProfileId, second.id);
+  const active = getActiveProfile(switched);
+  assert.equal(active.state.annualKwh, 7000);
+});
+
+test("exporte et réimporte un profil sans perte", () => {
+  const stateInput = defaultStateInput;
+  const profile = createSavedProfile("Test export", stateInput);
+  const envelope = buildExportEnvelope(profile, "0.7.0");
+  const json = JSON.stringify(envelope);
+
+  const imported = parseProfileJson(json);
+  assert.equal(imported.name, "Test export");
+  assert.equal(imported.state.annualKwh, defaultState.annualKwh);
+  assert.equal(imported.state.power, defaultState.power);
+  assert.notEqual(imported.id, profile.id);
+});
+
+test("rejette un fichier JSON invalide à l'import", () => {
+  assert.throws(() => parseProfileJson("{}"), /Format de profil invalide/);
+  assert.throws(() => parseProfileJson('{"profile":{"name":"x"}}'), /Format de profil invalide/);
+  assert.throws(() => parseProfileJson("not json"));
+});
+
+test("met à jour l'état d'un profil existant via upsert", () => {
+  const stateInput = defaultStateInput;
+  const { store, profile } = addProfile({ version: 1, profiles: [], activeProfileId: null }, "Up", stateInput);
+  const updated = upsertProfile(store, profile.id, { ...stateInput, annualKwh: 12345 });
+  assert.equal(updated.profiles[0].state.annualKwh, 12345);
+  assert.equal(updated.profiles[0].name, profile.name);
+});
+
+test("sauvegarde et recharge un store de profils", () => {
+  const values = new Map();
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: () => {},
+  };
+  const stateInput = defaultStateInput;
+  const { store } = addProfile({ version: 1, profiles: [], activeProfileId: null }, "Persist", stateInput);
+  saveProfilesStore(storage, store);
+
+  const reloaded = loadProfilesStore(storage);
+  assert.equal(reloaded.profiles.length, 1);
+  assert.equal(reloaded.profiles[0].name, "Persist");
+  assert.equal(reloaded.activeProfileId, reloaded.profiles[0].id);
+});
+
 test("utilise le même numéro de version dans la PWA, le cache et le paquet", async () => {
   const [versionSource, pageSource, manifestSource, serviceWorkerSource, packageSource, lockSource] = await Promise.all([
     readFile(new URL("../app/version.ts", import.meta.url), "utf8"),
@@ -250,7 +383,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.6.1");
+  assert.equal(version, "0.7.0");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);

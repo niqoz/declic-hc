@@ -133,3 +133,19 @@ export type LegacySimulatorState = Omit<Partial<SimulatorState>, "appliances"> &
   recipeReferenceKwh?: number;
   consumptionMode?: LegacyConsumptionMode;
 };
+
+export type SimulatorStateInput = Omit<SimulatorState, "version">;
+
+export type SavedProfile = {
+  id: string;
+  name: string;
+  state: SimulatorStateInput;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProfilesStore = {
+  version: number;
+  profiles: SavedProfile[];
+  activeProfileId: string | null;
+};

@@ -14,23 +14,33 @@ import {
   INTERNAL_ESTIMATE_SOURCE,
 } from "./simulation/presets";
 import {
-  CURRENT_STATE_VERSION,
-  loadSimulationState,
-  saveSimulationState,
-} from "./simulation/storage";
+  addProfile,
+  downloadProfileJson,
+  getActiveProfile,
+  migrateFromLegacyState,
+  readProfileFile,
+  removeProfile,
+  renameProfile,
+  saveProfilesStore,
+  setActiveProfile,
+  upsertProfile,
+} from "./simulation/profiles";
 import {
   householdScaleFactor,
   REFERENCE_RESIDENTS,
   scaleApplianceForHousehold,
   scaleAppliancesForHousehold,
 } from "./simulation/scaling";
+import { CURRENT_STATE_VERSION } from "./simulation/storage";
 import type {
   Appliance,
   AppliancePreset,
   CalculationMode,
   HeatingSettings,
   OffPeakWindow,
+  ProfilesStore,
   SimulatorState,
+  SimulatorStateInput,
   Tariff,
 } from "./simulation/types";
 import { APP_VERSION } from "./version";
@@ -122,11 +132,18 @@ export default function Home() {
   const [activeOffPeakWindowId, setActiveOffPeakWindowId] = useState(DEFAULT_HC_WINDOWS[0].id);
   const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false);
   const [storageReady, setStorageReady] = useState(false);
+  const [profilesStore, setProfilesStore] = useState<ProfilesStore>({ version: 1, profiles: [], activeProfileId: null });
+  const importProfileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const state = loadSimulationState(localStorage, DEFAULT_SIMULATOR_STATE, APPLIANCE_PRESETS);
+    const store = migrateFromLegacyState(localStorage, DEFAULT_SIMULATOR_STATE, APPLIANCE_PRESETS);
+    const active = getActiveProfile(store);
+    const state = active
+      ? { ...active.state, version: CURRENT_STATE_VERSION }
+      : DEFAULT_SIMULATOR_STATE;
     // Hydratation unique de la sauvegarde locale, disponible seulement après le montage côté client.
     // eslint-disable-next-line react-hooks/set-state-in-effect
+    setProfilesStore(store);
     setTariffs(state.tariffs);
     setPower(state.power);
     setAnnualKwh(state.annualKwh);
@@ -168,9 +185,14 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!storageReady) return;
-    saveSimulationState(localStorage, { tariffs, power, annualKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId });
-  }, [storageReady, tariffs, power, annualKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId]);
+    if (!storageReady || !profilesStore.activeProfileId) return;
+    const stateInput: SimulatorStateInput = { tariffs, power, annualKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId };
+    const updated = upsertProfile(profilesStore, profilesStore.activeProfileId, stateInput);
+    // Mise à jour du magasin de profils après chaque changement d'état — synchronisation nécessaire.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setProfilesStore(updated);
+    saveProfilesStore(localStorage, updated);
+  }, [storageReady, tariffs, power, annualKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId, profilesStore]);
 
   useEffect(() => {
     // Une plage active supprimée doit immédiatement basculer vers la première plage restante.
@@ -344,6 +366,92 @@ export default function Home() {
     });
   }
 
+  function loadProfileIntoState(state: SimulatorStateInput) {
+    setTariffs(state.tariffs);
+    setPower(state.power);
+    setAnnualKwh(state.annualKwh);
+    annualKwhRef.current = state.annualKwh;
+    setResidents(state.residents);
+    residentsRef.current = state.residents;
+    setBackgroundHcShare(state.backgroundHcShare);
+    setAppliances(state.appliances);
+    setHeating(state.heating);
+    nextApplianceIdRef.current = Math.max(1000, ...state.appliances.map((appliance) => appliance.id + 1));
+    setOffPeakWindows(state.offPeakWindows);
+    setActiveOffPeakWindowId(state.activeOffPeakWindowId);
+  }
+
+  function handleCreateProfile() {
+    const name = prompt("Nom de la nouvelle simulation :");
+    if (!name?.trim()) return;
+    const stateInput: SimulatorStateInput = { tariffs, power, annualKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId };
+    const { store: updated } = addProfile(profilesStore, name.trim(), stateInput);
+    setProfilesStore(updated);
+    saveProfilesStore(localStorage, updated);
+  }
+
+  function handleSwitchProfile(profileId: string) {
+    const updated = setActiveProfile(profilesStore, profileId);
+    const profile = getActiveProfile(updated);
+    if (profile) {
+      setProfilesStore(updated);
+      saveProfilesStore(localStorage, updated);
+      loadProfileIntoState(profile.state);
+    }
+  }
+
+  function handleExportProfile() {
+    const profile = getActiveProfile(profilesStore);
+    if (!profile) return;
+    const currentState: SimulatorStateInput = { tariffs, power, annualKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId };
+    const withLatest: typeof profile = { ...profile, state: currentState, updatedAt: new Date().toISOString() };
+    downloadProfileJson(withLatest, APP_VERSION);
+  }
+
+  function handleImportProfileClick() {
+    importProfileInputRef.current?.click();
+  }
+
+  function handleImportProfile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    readProfileFile(file).then((profile) => {
+      const updated: ProfilesStore = {
+        ...profilesStore,
+        profiles: [...profilesStore.profiles, profile],
+        activeProfileId: profile.id,
+      };
+      setProfilesStore(updated);
+      saveProfilesStore(localStorage, updated);
+      loadProfileIntoState(profile.state);
+      setNotice(`Profil « ${profile.name} » importé.`);
+    }).catch(() => {
+      setNotice("Ce fichier ne correspond pas au format attendu.");
+    });
+    event.target.value = "";
+  }
+
+  function handleRenameProfile() {
+    const profile = getActiveProfile(profilesStore);
+    if (!profile) return;
+    const name = prompt("Nouveau nom :", profile.name);
+    if (!name?.trim() || name.trim() === profile.name) return;
+    const updated = renameProfile(profilesStore, profile.id, name.trim());
+    setProfilesStore(updated);
+    saveProfilesStore(localStorage, updated);
+  }
+
+  function handleDeleteProfile() {
+    const profile = getActiveProfile(profilesStore);
+    if (!profile || profilesStore.profiles.length <= 1) return;
+    if (!confirm(`Supprimer le profil « ${profile.name} » ?`)) return;
+    const updated = removeProfile(profilesStore, profile.id);
+    setProfilesStore(updated);
+    saveProfilesStore(localStorage, updated);
+    const next = getActiveProfile(updated);
+    if (next) loadProfileIntoState(next.state);
+  }
+
   const verdictPositive = results.delta > 1;
   const verdictNeutral = Math.abs(results.delta) <= 1;
   const annualSliderMax = Math.max(20000, Math.ceil(annualKwh / 5000) * 5000);
@@ -354,7 +462,7 @@ export default function Home() {
     <main>
       <header className="topbar">
         <a className="brand" href="#top" aria-label="Déclic HC, accueil"><span className="brand-mark">⌁</span><span>Déclic <strong>HC</strong><small className="version-badge">v{APP_VERSION}</small></span></a>
-        <div className="top-actions"><span className="offline-badge"><i /> Fonctionne hors ligne</span><button className="button install-button" disabled={isInstalled} onClick={installApp}>{isInstalled ? "✓ Installée" : "⇩ Installer"}</button><button className="button subtle tariff-button" onClick={() => setTariffsOpen((open) => !open)}>⚙ Grille tarifaire</button></div>
+        <div className="top-actions"><span className="offline-badge"><i /> Fonctionne hors ligne</span><div className="profile-selector"><select className="profile-select" value={profilesStore.activeProfileId ?? ""} onChange={(event) => handleSwitchProfile(event.target.value)} aria-label="Profil de simulation">{profilesStore.profiles.map((profile) => <option value={profile.id} key={profile.id}>{profile.name}</option>)}</select><button className="button subtle icon-sm" type="button" onClick={handleCreateProfile} aria-label="Nouvelle simulation" title="Nouvelle simulation">＋</button><button className="button subtle icon-sm" type="button" onClick={handleExportProfile} aria-label="Exporter la simulation" title="Exporter JSON" disabled={!profilesStore.activeProfileId}>↓</button><button className="button subtle icon-sm" type="button" onClick={handleImportProfileClick} aria-label="Importer une simulation" title="Importer JSON">↑</button><button className="button subtle icon-sm" type="button" onClick={handleRenameProfile} aria-label="Renommer le profil" title="Renommer" disabled={!profilesStore.activeProfileId}>✎</button><button className="button subtle icon-sm" type="button" onClick={handleDeleteProfile} aria-label="Supprimer le profil" title="Supprimer" disabled={profilesStore.profiles.length <= 1}>×</button><input ref={importProfileInputRef} type="file" accept="application/json,.json" onChange={handleImportProfile} style={{ display: "none" }} /></div><button className="button install-button" disabled={isInstalled} onClick={installApp}>{isInstalled ? "✓ Installée" : "⇩ Installer"}</button><button className="button subtle tariff-button" onClick={() => setTariffsOpen((open) => !open)}>⚙ Grille tarifaire</button></div>
       </header>
       {installHelp && <div className="install-help" role="status"><span><strong>Installer Déclic HC</strong>Sur iPhone : Partager → Sur l’écran d’accueil. Sur Android : menu ⋮ → Installer l’application.</span><button aria-label="Fermer les instructions" onClick={() => setInstallHelp(false)}>×</button></div>}
 
