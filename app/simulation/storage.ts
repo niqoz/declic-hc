@@ -6,6 +6,7 @@ import type {
   AppliancePreset,
   ApplianceSource,
   CalculationMode,
+  HeatingSettings,
   LegacyAppliance,
   LegacySimulatorState,
   OffPeakWindow,
@@ -15,7 +16,7 @@ import type {
 } from "./types.js";
 
 export const STATE_STORAGE_KEY = "hphc-simulator-state";
-export const CURRENT_STATE_VERSION = 5;
+export const CURRENT_STATE_VERSION = 6;
 
 type StorageReader = Pick<Storage, "getItem">;
 type StorageWriter = Pick<Storage, "setItem">;
@@ -39,7 +40,22 @@ function cloneDefaults(defaults: SimulatorState): SimulatorState {
     version: CURRENT_STATE_VERSION,
     tariffs: defaults.tariffs.map((tariff) => ({ ...tariff })),
     appliances: defaults.appliances.map(cloneAppliance),
+    heating: { ...defaults.heating },
     offPeakWindows: defaults.offPeakWindows.map((window) => ({ ...window })),
+  };
+}
+
+function migrateHeating(value: unknown, fallback: HeatingSettings): HeatingSettings {
+  if (!value || typeof value !== "object") return { ...fallback };
+  const heating = value as Partial<HeatingSettings>;
+  return {
+    enabled: typeof heating.enabled === "boolean" ? heating.enabled : fallback.enabled,
+    surfaceM2: isFiniteNonNegative(heating.surfaceM2) ? clamp(heating.surfaceM2, 10, 400) : fallback.surfaceM2,
+    system: heating.system === "radiators" || heating.system === "heat-pump" ? heating.system : fallback.system,
+    dwellingType: heating.dwellingType === "house" || heating.dwellingType === "apartment" ? heating.dwellingType : fallback.dwellingType,
+    insulation: heating.insulation === "good" || heating.insulation === "standard" || heating.insulation === "poor" ? heating.insulation : fallback.insulation,
+    altitude: heating.altitude === "low" || heating.altitude === "medium" || heating.altitude === "high" ? heating.altitude : fallback.altitude,
+    occupancy: heating.occupancy === "away" || heating.occupancy === "mixed" || heating.occupancy === "home" ? heating.occupancy : fallback.occupancy,
   };
 }
 
@@ -221,6 +237,7 @@ export function migrateSimulationState(
       ? clamp(Number(state.backgroundHcShare), 0, 100)
       : defaults.backgroundHcShare,
     appliances,
+    heating: migrateHeating(state.heating, defaults.heating),
     offPeakWindows,
     activeOffPeakWindowId,
   };

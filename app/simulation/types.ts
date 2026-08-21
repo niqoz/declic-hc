@@ -51,11 +51,35 @@ export type OffPeakWindow = {
   end: string;
 };
 
+export type HeatingSystem = "radiators" | "heat-pump";
+export type DwellingType = "house" | "apartment";
+export type InsulationLevel = "good" | "standard" | "poor";
+export type AltitudeBand = "low" | "medium" | "high";
+export type OccupancyProfile = "away" | "mixed" | "home";
+
+export type HeatingSettings = {
+  enabled: boolean;
+  surfaceM2: number;
+  system: HeatingSystem;
+  dwellingType: DwellingType;
+  insulation: InsulationLevel;
+  altitude: AltitudeBand;
+  occupancy: OccupancyProfile;
+};
+
+export type HeatingEstimate = {
+  annualKwh: number;
+  lowKwh: number;
+  highKwh: number;
+  hcShare: number;
+};
+
 export type SimulationInput = {
   annualKwh: number;
   backgroundHcShare: number;
   tariff: Tariff;
   appliances: Appliance[];
+  heating?: HeatingEstimate;
 };
 
 export type SimulationWarning = {
@@ -71,6 +95,10 @@ export type EnergyDistribution = {
   backgroundKwh: number;
   backgroundHc: number;
   scheduledHc: number;
+  declaredHeatingKwh: number;
+  heatingKwh: number;
+  heatingHcKwh: number;
+  heatingHcShare: number;
   hcKwh: number;
   hpKwh: number;
   share: number;
@@ -100,6 +128,7 @@ export type SimulatorState = {
   residents: number;
   backgroundHcShare: number;
   appliances: Appliance[];
+  heating: HeatingSettings;
   offPeakWindows: OffPeakWindow[];
   activeOffPeakWindowId: number;
 };

@@ -11,6 +11,7 @@ import {
 } from "../.test-dist/calculate.js";
 import { APPLIANCE_PRESETS, DEFAULT_APPLIANCES } from "../.test-dist/presets.js";
 import { ELECDOM_DATA_QUALITY, getApplianceCalibration } from "../.test-dist/calibration.js";
+import { estimateHeating } from "../.test-dist/heating.js";
 import { householdScaleFactor, scaleAppliancesForHousehold } from "../.test-dist/scaling.js";
 import {
   CURRENT_STATE_VERSION,
@@ -37,6 +38,15 @@ const defaultState = {
   residents: 2,
   backgroundHcShare: 25,
   appliances,
+  heating: {
+    enabled: false,
+    surfaceM2: 80,
+    system: "radiators",
+    dwellingType: "apartment",
+    insulation: "standard",
+    altitude: "low",
+    occupancy: "away",
+  },
   offPeakWindows: [{ id: 1, start: "21:40", end: "05:40" }],
   activeOffPeakWindowId: 1,
 };
@@ -74,6 +84,36 @@ test("reproduit le scénario central de l'interface", () => {
 test("place toujours 100 % des consommateurs opportunistes en HC", () => {
   const appliance = { ...appliances[0], shiftableShare: 80, offPeakShare: 50 };
   closeTo(calculateApplianceOffPeakKwh(appliance), appliances[0].annualKwh);
+});
+
+test("estime séparément le chauffage selon la surface, le système et l'occupation", () => {
+  const window = { id: 1, start: "21:40", end: "05:40" };
+  const standard = { ...defaultState.heating, enabled: true, occupancy: "mixed" };
+  const radiators = estimateHeating(standard, window);
+  const heatPump = estimateHeating({ ...standard, system: "heat-pump" }, window);
+  const away = estimateHeating({ ...standard, occupancy: "away" }, window);
+  const home = estimateHeating({ ...standard, occupancy: "home" }, window);
+
+  closeTo(radiators.annualKwh / heatPump.annualKwh, 2.9);
+  assert.ok(radiators.lowKwh < radiators.annualKwh && radiators.highKwh > radiators.annualKwh);
+  assert.ok(away.annualKwh < home.annualKwh);
+  assert.ok(away.hcShare > home.hcShare);
+  assert.ok(radiators.hcShare > 0 && radiators.hcShare < 100);
+});
+
+test("retire le chauffage du reste du foyer et conserve le bilan énergétique", () => {
+  const result = calculateSimulation({
+    annualKwh: 4500,
+    backgroundHcShare: 25,
+    tariff,
+    appliances: [],
+    heating: { annualKwh: 1000, lowKwh: 650, highKwh: 1450, hcShare: 33.33333333333333 },
+  });
+
+  closeTo(result.heatingKwh, 1000);
+  closeTo(result.backgroundKwh, 3500);
+  closeTo(result.heatingHcKwh, 1000 / 3);
+  closeTo(result.hpKwh + result.hcKwh, 4500);
 });
 
 test("préserve toujours le bilan énergétique et plafonne les usages", () => {
@@ -219,7 +259,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.4.6");
+  assert.equal(version, "0.5.0");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);
@@ -234,6 +274,10 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   assert.doesNotMatch(pageSource, /<label>Consommation annuelle<div className="input-wrap">/);
   assert.match(pageSource, /aria-label="Nombre d’habitants" min=\{1\} max=\{12\}/);
   assert.match(pageSource, /aria-label="Puissance du compteur" min=\{0\}/);
+  assert.match(pageSource, /♨ Chauffage électrique/);
+  assert.match(pageSource, /Absent en journée/);
+  assert.match(pageSource, /Télétravail \/ présent/);
+  assert.match(pageSource, /results\.heatingHcKwh/);
   assert.match(pageSource, /v\{APP_VERSION\}/);
   assert.equal(JSON.parse(manifestSource).version, version);
   assert.match(serviceWorkerSource, new RegExp(`declic-hc-v${version?.replaceAll(".", "\\.")}`));
