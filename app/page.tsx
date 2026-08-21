@@ -359,7 +359,7 @@ export default function Home() {
       {installHelp && <div className="install-help" role="status"><span><strong>Installer Déclic HC</strong>Sur iPhone : Partager → Sur l’écran d’accueil. Sur Android : menu ⋮ → Installer l’application.</span><button aria-label="Fermer les instructions" onClick={() => setInstallHelp(false)}>×</button></div>}
 
       <section className="hero" id="top">
-        <div><p className="eyebrow">SIMULATEUR PÉDAGOGIQUE · CORSE</p><h1>Et si vos appareils<br />travaillaient <em>au bon moment&nbsp;?</em></h1><p className="intro">Déplacez vos usages flexibles en heures creuses et voyez immédiatement l’effet sur votre facture annuelle.</p></div>
+        <div><p className="eyebrow">SIMULATEUR PÉDAGOGIQUE · CORSE</p><h1>Base ou HP/HC :<br /><em>le vrai calcul</em></h1><p className="intro">Déplacez vos usages flexibles en heures creuses et voyez immédiatement l’effet sur votre facture annuelle.</p></div>
         <div className="hero-orbit" aria-hidden="true"><span className="sun">☀</span><span className="moon">☾</span><div className="orbit-line" /></div>
       </section>
 
