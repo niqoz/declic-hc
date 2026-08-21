@@ -84,7 +84,20 @@ const prepareRangeInteraction = (event: ReactPointerEvent<HTMLInputElement>) => 
   if (activeElement instanceof HTMLInputElement && activeElement.type === "number") {
     activeElement.blur();
   }
-  event.currentTarget.focus({ preventScroll: true });
+
+  const range = event.currentTarget;
+  const bounds = range.getBoundingClientRect();
+  const min = Number(range.min);
+  const max = Number(range.max);
+  const ratio = max > min ? clamp((range.valueAsNumber - min) / (max - min), 0, 1) : 0;
+  const thumbDiameter = 20;
+  const thumbCenter = bounds.left + thumbDiameter / 2 + ratio * Math.max(0, bounds.width - thumbDiameter);
+  const hitRadius = event.pointerType === "touch" ? 24 : 12;
+
+  if (Math.abs(event.clientX - thumbCenter) > hitRadius) {
+    event.preventDefault();
+  }
+  range.focus({ preventScroll: true });
 };
 
 const DEFAULT_SIMULATOR_STATE: SimulatorState = {
@@ -388,7 +401,7 @@ export default function Home() {
             </label>
             <label className="range-label"><span>Répartition totale en heures creuses <strong>{results.share.toFixed(0)} %</strong></span><input type="range" min={results.minShare} max={results.maxShare} step="1" value={results.share} disabled={results.backgroundKwh <= 0} onPointerDown={prepareRangeInteraction} onInput={(e) => setTotalHcShare(Number(e.currentTarget.value))} /></label>
             <div className="range-scale"><span>Minimum {results.minShare.toFixed(0)} %</span><span>Maximum {results.maxShare.toFixed(0)} %</span></div>
-            <p className="hint">Le curseur agit sur les usages non listés. Les appareils programmés fixent les limites atteignables.</p>
+            <p className="hint">Commencez le glissement sur la poignée. Le curseur agit sur les usages non listés ; les appareils programmés fixent les limites atteignables.</p>
           </section>
 
           <section className="panel appliance-panel">
