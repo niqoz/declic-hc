@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, InputHTMLAttributes, useEffect, useMemo, useRef, useState } from "react";
 import {
   calculateSimulation,
   clamp,
@@ -368,8 +368,8 @@ export default function Home() {
           <section className="panel setup-panel">
             <div className="step-heading"><span>01</span><div><p>VOTRE FOYER</p><h2>Posons le décor</h2></div></div>
             <div className="two-fields">
-              <label>Consommation annuelle<div className="input-wrap"><input type="number" min="0" step="100" value={annualKwh} onChange={(e) => updateAnnualKwh(Number(e.target.value))} /><span>kWh/an</span></div></label>
-              <label>Habitants<div className="input-wrap"><input aria-label="Nombre d’habitants" type="number" min="1" max="12" step="1" value={residents} onChange={(e) => updateResidents(Number(e.target.value))} /><span>pers.</span></div></label>
+              <label>Consommation annuelle<div className="input-wrap"><NumericInput min={0} step={100} value={annualKwh} onValueChange={updateAnnualKwh} /><span>kWh/an</span></div></label>
+              <label>Habitants<div className="input-wrap"><NumericInput aria-label="Nombre d’habitants" min={1} max={12} step={1} value={residents} onValueChange={updateResidents} /><span>pers.</span></div></label>
               <label>Puissance du compteur<select value={power} onChange={(e) => setPower(Number(e.target.value))}>{tariffs.map((tariff) => <option key={tariff.power} value={tariff.power}>{tariff.power} kVA</option>)}</select></label>
             </div>
             <label className="annual-slider">
@@ -388,14 +388,14 @@ export default function Home() {
             <div className="appliance-list">{appliances.map((appliance) => <article className="appliance" key={appliance.id}>
               <button className="remove" aria-label={`Retirer ${appliance.name}`} onClick={() => setAppliances((current) => current.filter((item) => item.id !== appliance.id))}>×</button>
               <div className="appliance-identity"><input className="appliance-name" aria-label="Nom de l’usage" value={appliance.name} onChange={(e) => updateAppliance(appliance.id, { name: e.target.value })} /><span className={`behavior-toggle ${appliance.calculationMode}`}><i />{appliance.calculationMode === "measured" ? "Valeur mesurée" : appliance.calculationMode === "detailed" ? "Calcul détaillé" : "Valeur de référence"}</span></div>
-              <div className="appliance-energy"><input aria-label={`Consommation annuelle de ${appliance.name}`} type="number" min="0" step="10" value={Math.round(appliance.annualKwh)} onChange={(e) => updateApplianceKwh(appliance.id, Number(e.target.value))} /><span>kWh/an</span></div>
+              <div className="appliance-energy"><NumericInput aria-label={`Consommation annuelle de ${appliance.name}`} min={0} step={10} value={Math.round(appliance.annualKwh)} onValueChange={(value) => updateApplianceKwh(appliance.id, value)} /><span>kWh/an</span></div>
               <div className="schedule scheduled"><span className="schedule-icon">☾</span><span><small>100 % DE L’USAGE EN HC</small>{formatTime(activeOffPeakWindow.start)}–{formatTime(activeOffPeakWindow.end)}</span><i aria-hidden="true" /></div>
               <details className="appliance-assumptions">
                 <summary>Hypothèses, flexibilité et source <b>{number.format(appliance.lowKwh)}–{number.format(appliance.highKwh)} kWh/an</b></summary>
                 <div className="assumption-grid">
                   <label>Méthode<select value={appliance.calculationMode} onChange={(event) => updateCalculationMode(appliance.id, event.target.value as CalculationMode)}><option value="reference">Valeur de référence</option><option value="measured">Valeur mesurée</option><option value="detailed" disabled>Calcul détaillé — lot 4</option></select></label>
-                  <label>Estimation basse<div className="compact-input"><input type="number" min="0" step="10" disabled={appliance.calculationMode === "measured"} value={Math.round(appliance.lowKwh)} onChange={(event) => updateAppliance(appliance.id, { lowKwh: clamp(Number(event.target.value), 0, appliance.annualKwh) })} /><span>kWh</span></div></label>
-                  <label>Estimation haute<div className="compact-input"><input type="number" min={appliance.annualKwh} step="10" disabled={appliance.calculationMode === "measured"} value={Math.round(appliance.highKwh)} onChange={(event) => updateAppliance(appliance.id, { highKwh: Math.max(appliance.annualKwh, Number(event.target.value)) })} /><span>kWh</span></div></label>
+                  <label>Estimation basse<div className="compact-input"><NumericInput min={0} step={10} disabled={appliance.calculationMode === "measured"} value={Math.round(appliance.lowKwh)} onValueChange={(value) => updateAppliance(appliance.id, { lowKwh: clamp(value, 0, appliance.annualKwh) })} /><span>kWh</span></div></label>
+                  <label>Estimation haute<div className="compact-input"><NumericInput min={appliance.annualKwh} step={10} disabled={appliance.calculationMode === "measured"} value={Math.round(appliance.highKwh)} onValueChange={(value) => updateAppliance(appliance.id, { highKwh: Math.max(appliance.annualKwh, value) })} /><span>kWh</span></div></label>
                 </div>
                 <p className="offpeak-assumption"><strong>Placement retenu :</strong> 100 % de cet usage opportuniste pendant les heures creuses.</p>
                 <p className={`appliance-source ${appliance.source.kind}`}>Source : <strong>{appliance.source.organization}</strong> — {appliance.source.label}{appliance.source.year ? ` (${appliance.source.year})` : ""}{appliance.source.url && <> · <a href={appliance.source.url} target="_blank" rel="noreferrer">consulter</a></>}</p>
@@ -459,6 +459,41 @@ export default function Home() {
   );
 }
 
+type NumericInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "value" | "onChange"> & {
+  value: number;
+  onValueChange: (value: number) => void;
+};
+
+function NumericInput({ value, onValueChange, onFocus, onBlur, ...props }: NumericInputProps) {
+  const [draft, setDraft] = useState(String(value));
+  const focused = useRef(false);
+
+  useEffect(() => {
+    if (!focused.current) setDraft(String(value));
+  }, [value]);
+
+  return <input
+    {...props}
+    type="number"
+    value={draft}
+    onFocus={(event) => { focused.current = true; onFocus?.(event); }}
+    onChange={(event) => {
+      const nextDraft = event.target.value;
+      setDraft(nextDraft);
+      if (nextDraft.trim() === "") return;
+      const parsed = Number(nextDraft);
+      if (Number.isFinite(parsed)) onValueChange(parsed);
+    }}
+    onBlur={(event) => {
+      focused.current = false;
+      const parsed = Number(draft);
+      if (draft.trim() !== "" && Number.isFinite(parsed)) onValueChange(parsed);
+      setDraft(String(value));
+      onBlur?.(event);
+    }}
+  />;
+}
+
 function Field({ label, suffix, value, step = 0.01, onChange }: { label: string; suffix: string; value: number; step?: number; onChange: (value: number) => void }) {
-  return <label>{label}<div className="input-wrap"><input type="number" min="0" step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} /><span>{suffix}</span></div></label>;
+  return <label>{label}<div className="input-wrap"><NumericInput min={0} step={step} value={value} onValueChange={onChange} /><span>{suffix}</span></div></label>;
 }
