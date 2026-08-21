@@ -2,11 +2,15 @@
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import {
-  calculateEffectiveAppliances,
   calculateSimulation,
   clamp,
   HOUSEHOLD_REFERENCE_KWH,
 } from "./simulation/calculate";
+import {
+  APPLIANCE_PRESETS,
+  DEFAULT_APPLIANCES,
+  INTERNAL_ESTIMATE_SOURCE,
+} from "./simulation/presets";
 import {
   CURRENT_STATE_VERSION,
   loadSimulationState,
@@ -15,7 +19,7 @@ import {
 import type {
   Appliance,
   AppliancePreset,
-  ConsumptionMode,
+  CalculationMode,
   OffPeakWindow,
   SimulatorState,
   Tariff,
@@ -36,23 +40,6 @@ const DEFAULT_TARIFFS: Tariff[] = [
   { power: 24, baseSubscription: 436.97, hphcSubscription: 436.97, basePrice: 0.182, hpPrice: 0.1964, hcPrice: 0.1457 },
   { power: 30, baseSubscription: 519.44, hphcSubscription: 519.44, basePrice: 0.182, hpPrice: 0.1964, hcPrice: 0.1457 },
   { power: 36, baseSubscription: 602.71, hphcSubscription: 602.71, basePrice: 0.182, hpPrice: 0.1964, hcPrice: 0.1457 },
-];
-
-const DEFAULT_APPLIANCES: Appliance[] = [
-  { id: 1, name: "Chauffe-eau", kwh: 1200, inOffPeak: true, mode: "proportional", referenceKwh: 4500 },
-  { id: 2, name: "Lave-linge", kwh: 160, inOffPeak: false, mode: "proportional", referenceKwh: 4500 },
-  { id: 3, name: "Lave-vaisselle", kwh: 220, inOffPeak: false, mode: "proportional", referenceKwh: 4500 },
-];
-
-const APPLIANCE_PRESETS: AppliancePreset[] = [
-  { name: "Chauffe-eau", kwh: 1200, icon: "♨", detail: "Ballon électrique", mode: "proportional", referenceKwh: 4500 },
-  { name: "Véhicule électrique", kwh: 2000, icon: "⚡", detail: "Recharge à domicile", mode: "fixed", referenceKwh: 4500 },
-  { name: "Pompe de piscine", kwh: 900, icon: "≈", detail: "Filtration programmable", mode: "fixed", referenceKwh: 4500 },
-  { name: "Ballon thermodynamique", kwh: 500, icon: "◌", detail: "Eau chaude optimisée", mode: "proportional", referenceKwh: 4500 },
-  { name: "Lave-linge", kwh: 160, icon: "◉", detail: "Cycles différés", mode: "proportional", referenceKwh: 4500 },
-  { name: "Lave-vaisselle", kwh: 220, icon: "◇", detail: "Cycles différés", mode: "proportional", referenceKwh: 4500 },
-  { name: "Sèche-linge", kwh: 300, icon: "◎", detail: "Cycles programmables", mode: "proportional", referenceKwh: 4500 },
-  { name: "Climatisation pilotée", kwh: 600, icon: "❄", detail: "Préclimatisation", mode: "proportional", referenceKwh: 4500 },
 ];
 
 const DEFAULT_HC_WINDOWS: OffPeakWindow[] = [
@@ -163,11 +150,6 @@ export default function Home() {
 
   const activeTariff = tariffs.find((tariff) => tariff.power === power) ?? tariffs[0];
   const activeOffPeakWindow = offPeakWindows.find((window) => window.id === activeOffPeakWindowId) ?? offPeakWindows[0];
-  const effectiveAppliances = useMemo(
-    () => calculateEffectiveAppliances(appliances, annualKwh),
-    [annualKwh, appliances],
-  );
-
   const results = useMemo(
     () => calculateSimulation({ annualKwh, backgroundHcShare, tariff: activeTariff, appliances }),
     [activeTariff, annualKwh, appliances, backgroundHcShare],
@@ -181,45 +163,67 @@ export default function Home() {
     setAppliances((current) => current.map((appliance) => appliance.id === id ? { ...appliance, ...patch } : appliance));
   }
 
-  function updateApplianceKwh(id: number, displayedKwh: number) {
+  function updateApplianceKwh(id: number, annualKwhValue: number) {
     const appliance = appliances.find((item) => item.id === id);
     if (!appliance) return;
-    const storedKwh = appliance.mode === "proportional" && annualKwh > 0 ? displayedKwh * appliance.referenceKwh / annualKwh : displayedKwh;
-    updateAppliance(id, { kwh: Math.max(0, storedKwh) });
-  }
-
-  function changeApplianceMode(id: number, nextMode: ConsumptionMode) {
-    const displayed = effectiveAppliances.find((appliance) => appliance.id === id);
-    if (!displayed || displayed.mode === nextMode) return;
+    const nextAnnualKwh = Math.max(0, annualKwhValue);
+    if (appliance.calculationMode === "measured") {
+      updateAppliance(id, { annualKwh: nextAnnualKwh, lowKwh: nextAnnualKwh, highKwh: nextAnnualKwh });
+      return;
+    }
     updateAppliance(id, {
-      kwh: nextMode === "proportional" && annualKwh > 0 ? displayed.kwh * HOUSEHOLD_REFERENCE_KWH / annualKwh : displayed.kwh,
-      mode: nextMode,
-      referenceKwh: HOUSEHOLD_REFERENCE_KWH,
+      annualKwh: nextAnnualKwh,
+      lowKwh: Math.min(appliance.lowKwh, nextAnnualKwh),
+      highKwh: Math.max(appliance.highKwh, nextAnnualKwh),
     });
   }
 
-  function setAllApplianceModes(nextMode: ConsumptionMode) {
-    setAppliances((current) => current.map((appliance) => {
-      const displayed = effectiveAppliances.find((item) => item.id === appliance.id) ?? appliance;
-      return {
-        ...appliance,
-        kwh: nextMode === "proportional" && annualKwh > 0 ? displayed.kwh * HOUSEHOLD_REFERENCE_KWH / annualKwh : displayed.kwh,
-        mode: nextMode,
-        referenceKwh: HOUSEHOLD_REFERENCE_KWH,
-      };
-    }));
-  }
-
   function addAppliance(preset?: AppliancePreset) {
-    const model = preset ?? { name: "Nouvel usage", kwh: 150, mode: "fixed" as ConsumptionMode, referenceKwh: Math.max(annualKwh, 1) };
+    const model = preset ?? {
+      type: "custom",
+      name: "Nouvel usage",
+      annualKwh: 150,
+      lowKwh: 100,
+      highKwh: 200,
+      calculationMode: "reference" as CalculationMode,
+      shiftableShare: 100,
+      defaultOffPeakShare: 100,
+      source: { ...INTERNAL_ESTIMATE_SOURCE },
+    };
     setAppliances((current) => [...current, {
       id: Date.now() + Math.random(),
+      type: model.type,
       name: model.name,
-      kwh: model.kwh,
-      inOffPeak: true,
-      mode: model.mode,
-      referenceKwh: model.referenceKwh,
+      annualKwh: model.annualKwh,
+      lowKwh: model.lowKwh,
+      highKwh: model.highKwh,
+      calculationMode: model.calculationMode,
+      shiftableShare: model.shiftableShare,
+      offPeakShare: model.defaultOffPeakShare,
+      source: { ...model.source },
     }]);
+  }
+
+  function updateCalculationMode(id: number, mode: CalculationMode) {
+    const appliance = appliances.find((item) => item.id === id);
+    if (!appliance) return;
+    if (mode === "measured") {
+      updateAppliance(id, {
+        calculationMode: mode,
+        lowKwh: appliance.annualKwh,
+        highKwh: appliance.annualKwh,
+        source: { kind: "user", organization: "Foyer", label: "Valeur mesurée ou relevée par l’utilisateur" },
+      });
+      return;
+    }
+    const preset = APPLIANCE_PRESETS.find((candidate) => candidate.type === appliance.type);
+    const scale = preset && preset.annualKwh > 0 ? appliance.annualKwh / preset.annualKwh : 1;
+    updateAppliance(id, {
+      calculationMode: mode,
+      lowKwh: preset ? preset.lowKwh * scale : appliance.annualKwh * 0.7,
+      highKwh: preset ? preset.highKwh * scale : appliance.annualKwh * 1.3,
+      source: { ...(preset?.source ?? INTERNAL_ESTIMATE_SOURCE) },
+    });
   }
 
   function updateOffPeakWindow(id: number, patch: Partial<OffPeakWindow>) {
@@ -331,12 +335,23 @@ export default function Home() {
 
           <section className="panel appliance-panel">
             <div className="step-heading"><span>02</span><div><p>USAGES FLEXIBLES</p><h2>À vous de les décaler</h2></div></div>
-            <div className="behavior-guide"><span><strong>Références stables</strong>Les modèles proportionnels sont toujours calculés depuis un foyer de référence de 4 500 kWh/an, jamais depuis la position du curseur au moment de l’ajout.</span><div><button type="button" onClick={() => setAllApplianceModes("fixed")}>Tout fixer</button><button type="button" onClick={() => setAllApplianceModes("proportional")}>Tout proportionnel</button></div></div>
-            <div className="appliance-list">{appliances.map((appliance, index) => <article className="appliance" key={appliance.id}>
+            <div className="behavior-guide"><span><strong>Consommations absolues</strong>Modifier la consommation du foyer ne redimensionne plus les appareils. Chaque usage conserve sa propre valeur annuelle.</span><div className="usage-balance"><b>{number.format(results.declaredApplianceKwh)} kWh</b><small>usages listés</small><b>{number.format(results.backgroundKwh)} kWh</b><small>reste du foyer</small></div></div>
+            <div className="appliance-list">{appliances.map((appliance) => <article className="appliance" key={appliance.id}>
               <button className="remove" aria-label={`Retirer ${appliance.name}`} onClick={() => setAppliances((current) => current.filter((item) => item.id !== appliance.id))}>×</button>
-              <div className="appliance-identity"><input className="appliance-name" aria-label="Nom de l’usage" value={appliance.name} onChange={(e) => updateAppliance(appliance.id, { name: e.target.value })} /><button type="button" className={`behavior-toggle ${appliance.mode}`} onClick={() => changeApplianceMode(appliance.id, appliance.mode === "fixed" ? "proportional" : "fixed")}><i />{appliance.mode === "fixed" ? "Valeur fixe" : `Proportionnel · réf. ${number.format(appliance.referenceKwh)}`}</button></div>
-              <div className="appliance-energy"><input aria-label={`Consommation annuelle de ${appliance.name}`} type="number" min="0" step="10" value={Math.round(effectiveAppliances[index].kwh)} onChange={(e) => updateApplianceKwh(appliance.id, Number(e.target.value))} /><span>kWh/an</span></div>
-              <button className={`schedule ${appliance.inOffPeak ? "scheduled" : ""}`} onClick={() => updateAppliance(appliance.id, { inOffPeak: !appliance.inOffPeak })}><span className="schedule-icon">{appliance.inOffPeak ? "☾" : "☀"}</span><span><small>{appliance.inOffPeak ? "PROGRAMMÉ EN HC" : "CONSOMMÉ EN"}</small>{appliance.inOffPeak ? `${formatTime(activeOffPeakWindow.start)}–${formatTime(activeOffPeakWindow.end)}` : "Heures pleines"}</span><i /></button>
+              <div className="appliance-identity"><input className="appliance-name" aria-label="Nom de l’usage" value={appliance.name} onChange={(e) => updateAppliance(appliance.id, { name: e.target.value })} /><span className={`behavior-toggle ${appliance.calculationMode}`}><i />{appliance.calculationMode === "measured" ? "Valeur mesurée" : appliance.calculationMode === "detailed" ? "Calcul détaillé" : "Valeur de référence"}</span></div>
+              <div className="appliance-energy"><input aria-label={`Consommation annuelle de ${appliance.name}`} type="number" min="0" step="10" value={Math.round(appliance.annualKwh)} onChange={(e) => updateApplianceKwh(appliance.id, Number(e.target.value))} /><span>kWh/an</span></div>
+              <button className={`schedule ${appliance.offPeakShare > 0 ? "scheduled" : ""}`} onClick={() => updateAppliance(appliance.id, { offPeakShare: appliance.offPeakShare > 0 ? 0 : appliance.shiftableShare })}><span className="schedule-icon">{appliance.offPeakShare > 0 ? "☾" : "☀"}</span><span><small>{appliance.offPeakShare > 0 ? `${appliance.offPeakShare.toFixed(0)} % DE L’USAGE EN HC` : "NON PROGRAMMÉ EN HC"}</small>{appliance.offPeakShare > 0 ? `${formatTime(activeOffPeakWindow.start)}–${formatTime(activeOffPeakWindow.end)}` : "Basculer vers les HC"}</span><i /></button>
+              <details className="appliance-assumptions">
+                <summary>Hypothèses, flexibilité et source <b>{number.format(appliance.lowKwh)}–{number.format(appliance.highKwh)} kWh/an</b></summary>
+                <div className="assumption-grid">
+                  <label>Méthode<select value={appliance.calculationMode} onChange={(event) => updateCalculationMode(appliance.id, event.target.value as CalculationMode)}><option value="reference">Valeur de référence</option><option value="measured">Valeur mesurée</option><option value="detailed" disabled>Calcul détaillé — lot 4</option></select></label>
+                  <label>Estimation basse<div className="compact-input"><input type="number" min="0" step="10" disabled={appliance.calculationMode === "measured"} value={Math.round(appliance.lowKwh)} onChange={(event) => updateAppliance(appliance.id, { lowKwh: clamp(Number(event.target.value), 0, appliance.annualKwh) })} /><span>kWh</span></div></label>
+                  <label>Estimation haute<div className="compact-input"><input type="number" min={appliance.annualKwh} step="10" disabled={appliance.calculationMode === "measured"} value={Math.round(appliance.highKwh)} onChange={(event) => updateAppliance(appliance.id, { highKwh: Math.max(appliance.annualKwh, Number(event.target.value)) })} /><span>kWh</span></div></label>
+                </div>
+                <label className="assumption-range"><span>Part déplaçable <strong>{appliance.shiftableShare.toFixed(0)} %</strong></span><input type="range" min="0" max="100" step="1" value={appliance.shiftableShare} onInput={(event) => { const shiftableShare = Number(event.currentTarget.value); updateAppliance(appliance.id, { shiftableShare, offPeakShare: Math.min(appliance.offPeakShare, shiftableShare) }); }} /></label>
+                <label className="assumption-range"><span>Part réellement placée en HC <strong>{appliance.offPeakShare.toFixed(0)} %</strong></span><input type="range" min="0" max={appliance.shiftableShare} step="1" value={appliance.offPeakShare} disabled={appliance.shiftableShare === 0} onInput={(event) => updateAppliance(appliance.id, { offPeakShare: Number(event.currentTarget.value) })} /></label>
+                <p className={`appliance-source ${appliance.source.kind}`}>Source : <strong>{appliance.source.organization}</strong> — {appliance.source.label}{appliance.source.year ? ` (${appliance.source.year})` : ""}{appliance.source.url && <> · <a href={appliance.source.url} target="_blank" rel="noreferrer">consulter</a></>}</p>
+              </details>
             </article>)}</div>
             <details className="preset-library">
               <summary>＋ Ajouter un consommateur préenregistré</summary>
@@ -344,7 +359,7 @@ export default function Home() {
               <div className="preset-grid">
                 {APPLIANCE_PRESETS.map((preset) => <button type="button" key={preset.name} onClick={() => addAppliance(preset)}>
                   <span className="preset-icon">{preset.icon}</span>
-                  <span><strong>{preset.name}</strong><small>{preset.detail} · {number.format(preset.kwh)} kWh/an {preset.mode === "proportional" ? `à ${number.format(preset.referenceKwh)} kWh foyer` : "fixes"}</small></span>
+                  <span><strong>{preset.name}</strong><small>{preset.detail} · {number.format(preset.annualKwh)} kWh/an · plage {number.format(preset.lowKwh)}–{number.format(preset.highKwh)}</small></span>
                   <b>＋</b>
                 </button>)}
               </div>
@@ -359,7 +374,7 @@ export default function Home() {
           <h2>{verdictPositive ? "Les heures creuses prennent l’avantage" : verdictNeutral ? "Les deux options sont presque à égalité" : "Le tarif Base reste devant"}</h2>
           <div className={`saving ${verdictPositive ? "positive" : "negative"}`}><span>{verdictPositive ? "ÉCONOMIE ESTIMÉE" : verdictNeutral ? "ÉCART ESTIMÉ" : "SURCOÛT HP/HC ESTIMÉ"}</span><strong>{euros.format(Math.abs(results.delta))}<small>/ an</small></strong><p>soit {preciseEuros.format(Math.abs(results.delta) / 12)} par mois</p></div>
           <div className="cost-lines"><div><span>Option Base</span><strong>{euros.format(results.baseCost)}</strong></div><div className="highlight"><span>Option HP / HC</span><strong>{euros.format(results.hphcCost)}</strong></div></div>
-          <div className="distribution"><div className="distribution-title"><span>Répartition HP / HC<small>Plage compteur : {formatTime(activeOffPeakWindow.start)}–{formatTime(activeOffPeakWindow.end)}</small></span><strong>{results.share.toFixed(0)} % en HC</strong></div><div className="bar"><span style={{ width: `${results.share}%` }} /></div><div className="bar-legend"><span>☀ HP · {number.format(results.hpKwh)} kWh</span><span>☾ HC · {number.format(results.hcKwh)} kWh</span></div></div>
+          <div className="distribution"><div className="distribution-title"><span>Répartition HP / HC<small>Plage compteur : {formatTime(activeOffPeakWindow.start)}–{formatTime(activeOffPeakWindow.end)}</small></span><strong>{results.share.toFixed(0)} % en HC</strong></div><div className="bar"><span style={{ width: `${results.share}%` }} /></div><div className="bar-legend"><span>☀ HP · {number.format(results.hpKwh)} kWh</span><span>☾ HC · {number.format(results.hcKwh)} kWh</span></div><div className="energy-breakdown"><span>Usages listés<strong>{number.format(results.declaredApplianceKwh)} kWh</strong></span><span>Déplaçables<strong>{number.format(results.declaredShiftableKwh)} kWh</strong></span><span>Placés en HC<strong>{number.format(results.scheduledHc)} kWh</strong></span></div></div>
           <div className="threshold"><span className="threshold-icon">◎</span><p><strong>Votre point d’équilibre</strong><br />HP/HC devient intéressant à partir d’environ <b>{results.threshold.toFixed(0)} %</b> de consommation en heures creuses.</p></div>
           <p className="disclaimer">Estimation TTC, hors évolutions futures et services annexes. Comparez-la à une facture réelle avant toute décision contractuelle.</p>
         </aside>

@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  calculateApplianceOffPeakKwh,
   calculateBaseCost,
   calculateBreakEvenShare,
-  calculateEffectiveAppliances,
   calculateHphcCost,
   calculateSimulation,
 } from "../.test-dist/calculate.js";
+import { APPLIANCE_PRESETS, DEFAULT_APPLIANCES } from "../.test-dist/presets.js";
 import {
   CURRENT_STATE_VERSION,
   loadSimulationState,
@@ -24,13 +25,7 @@ const tariff = {
   hcPrice: 0.1457,
 };
 
-const appliances = [
-  { id: 1, name: "Chauffe-eau", kwh: 1200, inOffPeak: true, mode: "proportional", referenceKwh: 4500 },
-  { id: 2, name: "Lave-linge", kwh: 160, inOffPeak: false, mode: "proportional", referenceKwh: 4500 },
-  { id: 3, name: "Lave-vaisselle", kwh: 220, inOffPeak: false, mode: "proportional", referenceKwh: 4500 },
-];
-
-const presets = appliances.map((appliance) => ({ ...appliance, icon: "", detail: "" }));
+const appliances = DEFAULT_APPLIANCES.map((appliance) => ({ ...appliance, source: { ...appliance.source } }));
 const defaultState = {
   version: CURRENT_STATE_VERSION,
   tariffs: [tariff],
@@ -51,10 +46,11 @@ test("calcule séparément les coûts Base et HP/HC", () => {
   closeTo(calculateHphcCost(2570, 1930, tariff), 961.509);
 });
 
-test("reproduit le scénario de référence de l'interface", () => {
+test("reproduit le scénario central de l'interface", () => {
   const result = calculateSimulation({ annualKwh: 4500, backgroundHcShare: 25, tariff, appliances });
 
-  closeTo(result.declaredFlexibleKwh, 1580);
+  closeTo(result.declaredApplianceKwh, 1580);
+  closeTo(result.declaredShiftableKwh, 1580);
   closeTo(result.backgroundKwh, 2920);
   closeTo(result.scheduledHc, 1200);
   closeTo(result.hcKwh, 1930);
@@ -66,28 +62,38 @@ test("reproduit le scénario de référence de l'interface", () => {
   assert.deepEqual(result.warnings, []);
 });
 
+test("distingue la part déplaçable de la part réellement placée en HC", () => {
+  const appliance = { ...appliances[0], shiftableShare: 80, offPeakShare: 50 };
+  closeTo(calculateApplianceOffPeakKwh(appliance), 600);
+
+  const invalid = { ...appliance, offPeakShare: 95 };
+  closeTo(calculateApplianceOffPeakKwh(invalid), 960);
+});
+
 test("préserve toujours le bilan énergétique et plafonne les usages", () => {
   const oversized = [
-    { id: 1, name: "Usage A", kwh: 3000, inOffPeak: true, mode: "fixed", referenceKwh: 4500 },
-    { id: 2, name: "Usage B", kwh: 2000, inOffPeak: false, mode: "fixed", referenceKwh: 4500 },
+    { ...appliances[0], id: 10, name: "Usage A", annualKwh: 3000, lowKwh: 2500, highKwh: 3500, offPeakShare: 100 },
+    { ...appliances[1], id: 11, name: "Usage B", annualKwh: 2000, lowKwh: 1500, highKwh: 2500, offPeakShare: 0 },
   ];
   const result = calculateSimulation({ annualKwh: 4000, backgroundHcShare: 25, tariff, appliances: oversized });
 
   closeTo(result.applianceScale, 0.8);
-  closeTo(result.flexibleKwh, 4000);
+  closeTo(result.applianceKwh, 4000);
   closeTo(result.backgroundKwh, 0);
   closeTo(result.hpKwh + result.hcKwh, 4000);
   assert.ok(result.hpKwh >= 0 && result.hcKwh >= 0);
   assert.equal(result.warnings[0].code, "APPLIANCES_EXCEED_TOTAL");
 });
 
-test("le slider annuel est réversible", () => {
-  const initial = calculateEffectiveAppliances(appliances, 4500).map((appliance) => appliance.kwh);
-  const raised = calculateEffectiveAppliances(appliances, 10000).map((appliance) => appliance.kwh);
-  const restored = calculateEffectiveAppliances(appliances, 4500).map((appliance) => appliance.kwh);
+test("la consommation annuelle des appareils reste absolue quand le foyer change", () => {
+  const initial = calculateSimulation({ annualKwh: 4500, backgroundHcShare: 25, tariff, appliances });
+  const raised = calculateSimulation({ annualKwh: 10000, backgroundHcShare: 25, tariff, appliances });
+  const restored = calculateSimulation({ annualKwh: 4500, backgroundHcShare: 25, tariff, appliances });
 
-  assert.ok(raised.every((value, index) => value > initial[index]));
-  assert.deepEqual(restored, initial);
+  assert.equal(initial.declaredApplianceKwh, 1580);
+  assert.equal(raised.declaredApplianceKwh, 1580);
+  assert.equal(restored.declaredApplianceKwh, 1580);
+  assert.deepEqual(appliances.map((appliance) => appliance.annualKwh), [1200, 160, 220]);
 });
 
 test("gère une consommation nulle sans produire de valeur invalide", () => {
@@ -116,10 +122,32 @@ test("sauvegarde une version explicite et recharge le même état", () => {
   saveSimulationState(storage, defaultState);
   const serialized = JSON.parse(values.get(STATE_STORAGE_KEY));
   assert.equal(serialized.version, CURRENT_STATE_VERSION);
-  assert.deepEqual(loadSimulationState(storage, defaultState, presets), defaultState);
+  assert.deepEqual(loadSimulationState(storage, defaultState, APPLIANCE_PRESETS), defaultState);
 });
 
-test("migre une sauvegarde historique et répare ses plages invalides", () => {
+test("fige à sa valeur affichée un ancien appareil proportionnel", () => {
+  const legacy = {
+    version: 2,
+    annualKwh: 7200,
+    power: 6,
+    backgroundHcShare: 25,
+    appliances: [{ id: 9, name: "Chauffe-eau", kwh: 1200, inOffPeak: true, mode: "proportional", referenceKwh: 4500 }],
+    offPeakWindows: defaultState.offPeakWindows,
+    activeOffPeakWindowId: 1,
+  };
+  const migrated = loadSimulationState({ getItem: () => JSON.stringify(legacy) }, defaultState, APPLIANCE_PRESETS);
+
+  assert.equal(migrated.version, CURRENT_STATE_VERSION);
+  assert.equal(migrated.appliances[0].annualKwh, 1920);
+  assert.equal(migrated.appliances[0].lowKwh, 1440);
+  assert.equal(migrated.appliances[0].highKwh, 2560);
+  assert.equal(migrated.appliances[0].offPeakShare, 100);
+
+  const afterHouseholdChange = calculateSimulation({ annualKwh: 10000, backgroundHcShare: 25, tariff, appliances: migrated.appliances });
+  assert.equal(afterHouseholdChange.declaredApplianceKwh, 1920);
+});
+
+test("migre une sauvegarde plus ancienne et répare ses plages invalides", () => {
   const legacy = {
     annualKwh: 7200,
     power: 6,
@@ -128,20 +156,20 @@ test("migre une sauvegarde historique et répare ses plages invalides", () => {
     offPeakWindows: [{ id: 7, start: "25:00", end: "06:00" }],
     activeOffPeakWindowId: 999,
   };
-  const storage = { getItem: () => JSON.stringify(legacy) };
-  const migrated = loadSimulationState(storage, defaultState, presets);
+  const migrated = loadSimulationState({ getItem: () => JSON.stringify(legacy) }, defaultState, APPLIANCE_PRESETS);
 
   assert.equal(migrated.version, CURRENT_STATE_VERSION);
   assert.equal(migrated.annualKwh, 7200);
   assert.equal(migrated.backgroundHcShare, 100);
-  assert.equal(migrated.appliances[0].kwh, 1200);
-  assert.equal(migrated.appliances[0].mode, "proportional");
+  assert.equal(migrated.appliances[0].annualKwh, 1200);
+  assert.equal(migrated.appliances[0].calculationMode, "reference");
   assert.deepEqual(migrated.offPeakWindows, defaultState.offPeakWindows);
   assert.equal(migrated.activeOffPeakWindowId, 1);
 });
 
 test("revient aux valeurs par défaut lorsque la sauvegarde est corrompue", () => {
-  const state = loadSimulationState({ getItem: () => "{invalide" }, defaultState, presets);
+  const state = loadSimulationState({ getItem: () => "{invalide" }, defaultState, APPLIANCE_PRESETS);
   assert.deepEqual(state, defaultState);
   assert.notEqual(state.appliances, defaultState.appliances);
+  assert.notEqual(state.appliances[0].source, defaultState.appliances[0].source);
 });

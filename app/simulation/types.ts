@@ -7,28 +7,42 @@ export type Tariff = {
   hcPrice: number;
 };
 
-export type ConsumptionMode = "proportional" | "fixed";
+export type LegacyConsumptionMode = "proportional" | "fixed";
+export type CalculationMode = "reference" | "detailed" | "measured";
+export type SourceKind = "internal" | "official" | "user";
+
+export type ApplianceSource = {
+  kind: SourceKind;
+  organization: string;
+  label: string;
+  year?: number;
+  url?: string;
+};
 
 export type Appliance = {
   id: number;
+  type: string;
   name: string;
-  kwh: number;
-  inOffPeak: boolean;
-  mode: ConsumptionMode;
-  referenceKwh: number;
+  annualKwh: number;
+  lowKwh: number;
+  highKwh: number;
+  calculationMode: CalculationMode;
+  shiftableShare: number;
+  offPeakShare: number;
+  source: ApplianceSource;
 };
 
-export type AppliancePreset = {
-  name: string;
-  kwh: number;
+export type AppliancePreset = Omit<Appliance, "id" | "offPeakShare"> & {
   icon: string;
   detail: string;
-  mode: ConsumptionMode;
-  referenceKwh: number;
+  defaultOffPeakShare: number;
 };
 
-export type EffectiveAppliance = Appliance & {
-  storedKwh: number;
+export type LegacyAppliance = Partial<Appliance> & {
+  kwh?: number;
+  inOffPeak?: boolean;
+  mode?: LegacyConsumptionMode;
+  referenceKwh?: number;
 };
 
 export type OffPeakWindow = {
@@ -50,8 +64,10 @@ export type SimulationWarning = {
 };
 
 export type EnergyDistribution = {
-  declaredFlexibleKwh: number;
-  flexibleKwh: number;
+  declaredApplianceKwh: number;
+  applianceKwh: number;
+  declaredShiftableKwh: number;
+  shiftableKwh: number;
   backgroundKwh: number;
   backgroundHc: number;
   scheduledHc: number;
@@ -82,7 +98,8 @@ export type SimulatorState = {
   activeOffPeakWindowId: number;
 };
 
-export type LegacySimulatorState = Partial<SimulatorState> & {
+export type LegacySimulatorState = Omit<Partial<SimulatorState>, "appliances"> & {
+  appliances?: unknown[];
   recipeReferenceKwh?: number;
-  consumptionMode?: ConsumptionMode;
+  consumptionMode?: LegacyConsumptionMode;
 };

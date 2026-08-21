@@ -1,6 +1,5 @@
 import type {
   Appliance,
-  EffectiveAppliance,
   EnergyDistribution,
   SimulationInput,
   SimulationResult,
@@ -18,38 +17,36 @@ function nonNegative(value: number) {
   return Number.isFinite(value) ? Math.max(0, value) : 0;
 }
 
-export function calculateEffectiveApplianceKwh(appliance: Appliance, annualKwh: number) {
-  const storedKwh = nonNegative(appliance.kwh);
-  if (appliance.mode !== "proportional") return storedKwh;
-  const referenceKwh = nonNegative(appliance.referenceKwh);
-  return referenceKwh > 0 ? storedKwh * nonNegative(annualKwh) / referenceKwh : storedKwh;
-}
-
-export function calculateEffectiveAppliances(appliances: Appliance[], annualKwh: number): EffectiveAppliance[] {
-  return appliances.map((appliance) => ({
-    ...appliance,
-    storedKwh: appliance.kwh,
-    kwh: calculateEffectiveApplianceKwh(appliance, annualKwh),
-  }));
+export function calculateApplianceOffPeakKwh(appliance: Appliance) {
+  const annualKwh = nonNegative(appliance.annualKwh);
+  const shiftableShare = clamp(appliance.shiftableShare, 0, 100);
+  const offPeakShare = clamp(appliance.offPeakShare, 0, shiftableShare);
+  return annualKwh * offPeakShare / 100;
 }
 
 export function calculateEnergyDistribution(
   annualKwh: number,
   backgroundHcShare: number,
-  effectiveAppliances: EffectiveAppliance[],
+  appliances: Appliance[],
 ): EnergyDistribution {
   const safeAnnualKwh = nonNegative(annualKwh);
   const safeBackgroundHcShare = clamp(backgroundHcShare, 0, 100);
-  const declaredFlexibleKwh = effectiveAppliances.reduce((sum, appliance) => sum + nonNegative(appliance.kwh), 0);
-  const flexibleKwh = Math.min(safeAnnualKwh, declaredFlexibleKwh);
-  const applianceScale = declaredFlexibleKwh > safeAnnualKwh && declaredFlexibleKwh > 0
-    ? safeAnnualKwh / declaredFlexibleKwh
+  const declaredApplianceKwh = appliances.reduce((sum, appliance) => sum + nonNegative(appliance.annualKwh), 0);
+  const applianceKwh = Math.min(safeAnnualKwh, declaredApplianceKwh);
+  const applianceScale = declaredApplianceKwh > safeAnnualKwh && declaredApplianceKwh > 0
+    ? safeAnnualKwh / declaredApplianceKwh
     : 1;
-  const backgroundKwh = Math.max(0, safeAnnualKwh - flexibleKwh);
+  const declaredShiftableKwh = appliances.reduce(
+    (sum, appliance) => sum + nonNegative(appliance.annualKwh) * clamp(appliance.shiftableShare, 0, 100) / 100,
+    0,
+  );
+  const shiftableKwh = declaredShiftableKwh * applianceScale;
+  const backgroundKwh = Math.max(0, safeAnnualKwh - applianceKwh);
   const backgroundHc = backgroundKwh * safeBackgroundHcShare / 100;
-  const scheduledHc = effectiveAppliances
-    .filter((appliance) => appliance.inOffPeak)
-    .reduce((sum, appliance) => sum + nonNegative(appliance.kwh) * applianceScale, 0);
+  const scheduledHc = appliances.reduce(
+    (sum, appliance) => sum + calculateApplianceOffPeakKwh(appliance) * applianceScale,
+    0,
+  );
   const hcKwh = Math.min(safeAnnualKwh, backgroundHc + scheduledHc);
   const hpKwh = Math.max(0, safeAnnualKwh - hcKwh);
   const share = safeAnnualKwh > 0 ? hcKwh / safeAnnualKwh * 100 : 0;
@@ -57,8 +54,10 @@ export function calculateEnergyDistribution(
   const maxShare = safeAnnualKwh > 0 ? (scheduledHc + backgroundKwh) / safeAnnualKwh * 100 : 0;
 
   return {
-    declaredFlexibleKwh,
-    flexibleKwh,
+    declaredApplianceKwh,
+    applianceKwh,
+    declaredShiftableKwh,
+    shiftableKwh,
     backgroundKwh,
     backgroundHc,
     scheduledHc,
@@ -93,7 +92,7 @@ export function calculateBreakEvenShare(annualKwh: number, tariff: Tariff) {
   return clamp(threshold, 0, 100);
 }
 
-export function validateSimulationInput(input: SimulationInput, declaredFlexibleKwh?: number): SimulationWarning[] {
+export function validateSimulationInput(input: SimulationInput, declaredApplianceKwh?: number): SimulationWarning[] {
   const warnings: SimulationWarning[] = [];
   const numericValues = [
     input.annualKwh,
@@ -103,7 +102,13 @@ export function validateSimulationInput(input: SimulationInput, declaredFlexible
     input.tariff.basePrice,
     input.tariff.hpPrice,
     input.tariff.hcPrice,
-    ...input.appliances.flatMap((appliance) => [appliance.kwh, appliance.referenceKwh]),
+    ...input.appliances.flatMap((appliance) => [
+      appliance.annualKwh,
+      appliance.lowKwh,
+      appliance.highKwh,
+      appliance.shiftableShare,
+      appliance.offPeakShare,
+    ]),
   ];
 
   if (numericValues.some((value) => !Number.isFinite(value) || value < 0)) {
@@ -112,11 +117,15 @@ export function validateSimulationInput(input: SimulationInput, declaredFlexible
       message: "Certaines valeurs invalides ont été ramenées à zéro pour effectuer la simulation.",
     });
   }
-  if (input.backgroundHcShare < 0 || input.backgroundHcShare > 100) {
+  if (
+    input.backgroundHcShare < 0
+    || input.backgroundHcShare > 100
+    || input.appliances.some((appliance) => appliance.shiftableShare > 100 || appliance.offPeakShare > appliance.shiftableShare)
+  ) {
     if (!warnings.some((warning) => warning.code === "INVALID_INPUT")) {
       warnings.push({
         code: "INVALID_INPUT",
-        message: "La part d’heures creuses doit rester comprise entre 0 et 100 %.",
+        message: "Les proportions doivent rester comprises entre 0 et 100 %.",
       });
     }
   }
@@ -126,7 +135,7 @@ export function validateSimulationInput(input: SimulationInput, declaredFlexible
       message: "Le prix HC est supérieur au prix HP dans la grille utilisée.",
     });
   }
-  if ((declaredFlexibleKwh ?? 0) > nonNegative(input.annualKwh)) {
+  if ((declaredApplianceKwh ?? 0) > nonNegative(input.annualKwh)) {
     warnings.push({
       code: "APPLIANCES_EXCEED_TOTAL",
       message: "Les usages déclarés dépassent la consommation du foyer et sont réduits proportionnellement pour le calcul.",
@@ -136,11 +145,10 @@ export function validateSimulationInput(input: SimulationInput, declaredFlexible
 }
 
 export function calculateSimulation(input: SimulationInput): SimulationResult {
-  const effectiveAppliances = calculateEffectiveAppliances(input.appliances, input.annualKwh);
-  const distribution = calculateEnergyDistribution(input.annualKwh, input.backgroundHcShare, effectiveAppliances);
+  const distribution = calculateEnergyDistribution(input.annualKwh, input.backgroundHcShare, input.appliances);
   const baseCost = calculateBaseCost(input.annualKwh, input.tariff);
   const hphcCost = calculateHphcCost(distribution.hpKwh, distribution.hcKwh, input.tariff);
-  const warnings = validateSimulationInput(input, distribution.declaredFlexibleKwh);
+  const warnings = validateSimulationInput(input, distribution.declaredApplianceKwh);
 
   return {
     ...distribution,
