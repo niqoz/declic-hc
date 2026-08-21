@@ -140,12 +140,22 @@ export function validateSimulationInput(input: SimulationInput, declaredApplianc
 
 export function calculateSimulation(input: SimulationInput): SimulationResult {
   const distribution = calculateEnergyDistribution(input.annualKwh, input.backgroundHcShare, input.appliances);
-  const baseCost = calculateBaseCost(input.annualKwh, input.tariff);
-  const hphcCost = calculateHphcCost(distribution.hpKwh, distribution.hcKwh, input.tariff);
+  const baseSubscriptionCost = nonNegative(input.tariff.baseSubscription);
+  const baseEnergyCost = nonNegative(input.annualKwh) * nonNegative(input.tariff.basePrice);
+  const hphcSubscriptionCost = nonNegative(input.tariff.hphcSubscription);
+  const hpEnergyCost = nonNegative(distribution.hpKwh) * nonNegative(input.tariff.hpPrice);
+  const hcEnergyCost = nonNegative(distribution.hcKwh) * nonNegative(input.tariff.hcPrice);
+  const baseCost = baseSubscriptionCost + baseEnergyCost;
+  const hphcCost = hphcSubscriptionCost + hpEnergyCost + hcEnergyCost;
   const warnings = validateSimulationInput(input, distribution.declaredApplianceKwh);
 
   return {
     ...distribution,
+    baseSubscriptionCost,
+    baseEnergyCost,
+    hphcSubscriptionCost,
+    hpEnergyCost,
+    hcEnergyCost,
     baseCost,
     hphcCost,
     delta: baseCost - hphcCost,

@@ -61,6 +61,11 @@ test("reproduit le scénario central de l'interface", () => {
   closeTo(result.hpKwh, 2240.25);
   closeTo(result.baseCost, 1000.86);
   closeTo(result.hphcCost, 944.790675);
+  closeTo(result.baseSubscriptionCost, 175.56);
+  closeTo(result.baseEnergyCost, 825.3);
+  closeTo(result.hphcSubscriptionCost, 175.56);
+  closeTo(result.hpEnergyCost, 439.9851);
+  closeTo(result.hcEnergyCost, 329.245575);
   closeTo(result.delta, 56.069325);
   closeTo(result.threshold, 25.64102564102564);
   assert.deepEqual(result.warnings, []);
@@ -214,7 +219,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.4.4");
+  assert.equal(version, "0.4.5");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);
@@ -223,6 +228,9 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   assert.match(pageSource, /TOUJOURS PROGRAMMÉ EN HC/);
   assert.doesNotMatch(pageSource, /schedule scheduled[^>]*>.*<i aria-hidden="true"/);
   assert.match(pageSource, /<strong>Ajuster le modèle<\/strong>/);
+  assert.match(pageSource, /FACTURE EDF ANNUELLE ESTIMÉE · TTC/);
+  assert.match(pageSource, /results\.baseSubscriptionCost/);
+  assert.match(pageSource, /results\.hcEnergyCost/);
   assert.match(pageSource, /v\{APP_VERSION\}/);
   assert.equal(JSON.parse(manifestSource).version, version);
   assert.match(serviceWorkerSource, new RegExp(`declic-hc-v${version?.replaceAll(".", "\\.")}`));

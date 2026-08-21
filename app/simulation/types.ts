@@ -80,6 +80,11 @@ export type EnergyDistribution = {
 };
 
 export type SimulationResult = EnergyDistribution & {
+  baseSubscriptionCost: number;
+  baseEnergyCost: number;
+  hphcSubscriptionCost: number;
+  hpEnergyCost: number;
+  hcEnergyCost: number;
   baseCost: number;
   hphcCost: number;
   delta: number;
