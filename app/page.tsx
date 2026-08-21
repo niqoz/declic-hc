@@ -335,6 +335,7 @@ export default function Home() {
   const verdictPositive = results.delta > 1;
   const verdictNeutral = Math.abs(results.delta) <= 1;
   const annualSliderMax = Math.max(20000, Math.ceil(annualKwh / 5000) * 5000);
+  const powerSliderIndex = Math.max(0, tariffs.findIndex((tariff) => tariff.power === power));
   const schedulesCustomized = offPeakWindows.length !== DEFAULT_HC_WINDOWS.length || offPeakWindows.some((window, index) => window.start !== DEFAULT_HC_WINDOWS[index]?.start || window.end !== DEFAULT_HC_WINDOWS[index]?.end);
 
   return (
@@ -368,16 +369,23 @@ export default function Home() {
         <div className="controls-column">
           <section className="panel setup-panel">
             <div className="step-heading"><span>01</span><div><p>VOTRE FOYER</p><h2>Posons le décor</h2></div></div>
-            <div className="two-fields">
-              <label>Consommation annuelle<div className="input-wrap"><NumericInput min={0} step={100} value={annualKwh} onValueChange={updateAnnualKwh} /><span>kWh/an</span></div></label>
-              <label>Habitants<div className="input-wrap"><NumericInput aria-label="Nombre d’habitants" min={1} max={12} step={1} value={residents} onValueChange={updateResidents} /><span>pers.</span></div></label>
-              <label>Puissance du compteur<select value={power} onChange={(e) => setPower(Number(e.target.value))}>{tariffs.map((tariff) => <option key={tariff.power} value={tariff.power}>{tariff.power} kVA</option>)}</select></label>
+            <div className="household-sliders">
+              <label className="household-slider wide">
+                <span>Consommation annuelle <strong>{number.format(annualKwh)} kWh/an</strong></span>
+                <ThumbOnlyRange aria-label="Consommation annuelle en kilowattheures" min={0} max={annualSliderMax} step={100} value={annualKwh} onValueChange={updateAnnualKwh} />
+                <small><span>0 kWh</span><span>{number.format(annualSliderMax)} kWh</span></small>
+              </label>
+              <label className="household-slider">
+                <span>Habitants <strong>{residents} personne{residents > 1 ? "s" : ""}</strong></span>
+                <ThumbOnlyRange aria-label="Nombre d’habitants" min={1} max={12} step={1} value={residents} onValueChange={updateResidents} />
+                <small><span>1 personne</span><span>12 personnes</span></small>
+              </label>
+              <label className="household-slider">
+                <span>Puissance du compteur <strong>{power} kVA</strong></span>
+                <ThumbOnlyRange aria-label="Puissance du compteur" min={0} max={Math.max(0, tariffs.length - 1)} step={1} value={powerSliderIndex} onValueChange={(index) => setPower(tariffs[Math.round(index)]?.power ?? power)} />
+                <small><span>{tariffs[0]?.power ?? power} kVA</span><span>{tariffs.at(-1)?.power ?? power} kVA</span></small>
+              </label>
             </div>
-            <label className="annual-slider">
-              <span>Ajuster la consommation <strong>{number.format(annualKwh)} kWh/an</strong></span>
-              <ThumbOnlyRange aria-label="Consommation annuelle en kilowattheures" min={0} max={annualSliderMax} step={100} value={annualKwh} onValueChange={updateAnnualKwh} />
-              <small><span>0 kWh</span><span>{number.format(annualSliderMax)} kWh</span></small>
-            </label>
             <label className="range-label"><span>Répartition totale en heures creuses <strong>{results.share.toFixed(0)} %</strong></span><ThumbOnlyRange aria-label="Répartition totale en heures creuses" min={results.minShare} max={results.maxShare} step={1} value={results.share} disabled={results.backgroundKwh <= 0} onValueChange={setTotalHcShare} /></label>
             <div className="range-scale"><span>Minimum {results.minShare.toFixed(0)} %</span><span>Maximum {results.maxShare.toFixed(0)} %</span></div>
             <p className="hint">Commencez le glissement sur la poignée. Le curseur agit sur les usages non listés ; les appareils programmés fixent les limites atteignables.</p>

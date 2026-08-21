@@ -219,7 +219,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.4.5");
+  assert.equal(version, "0.4.6");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);
@@ -231,6 +231,9 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   assert.match(pageSource, /FACTURE EDF ANNUELLE ESTIMÉE · TTC/);
   assert.match(pageSource, /results\.baseSubscriptionCost/);
   assert.match(pageSource, /results\.hcEnergyCost/);
+  assert.doesNotMatch(pageSource, /<label>Consommation annuelle<div className="input-wrap">/);
+  assert.match(pageSource, /aria-label="Nombre d’habitants" min=\{1\} max=\{12\}/);
+  assert.match(pageSource, /aria-label="Puissance du compteur" min=\{0\}/);
   assert.match(pageSource, /v\{APP_VERSION\}/);
   assert.equal(JSON.parse(manifestSource).version, version);
   assert.match(serviceWorkerSource, new RegExp(`declic-hc-v${version?.replaceAll(".", "\\.")}`));
