@@ -8,7 +8,7 @@ import type {
 } from "./types.js";
 
 export const PROFILES_STORAGE_KEY = "hphc-profiles";
-export const PROFILES_STORE_VERSION = 3;
+export const PROFILES_STORE_VERSION = 4;
 const DEFAULT_PROFILE_NAME = "Ma simulation";
 
 type StorageReader = Pick<Storage, "getItem">;
@@ -212,6 +212,7 @@ export function parseProfileJson(text: string): SavedProfile {
     state: candidate.state as SimulatorStateInput,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    ...(typeof parsed?.version === "string" ? { importedAppVersion: parsed.version } : {}),
   };
 }
 

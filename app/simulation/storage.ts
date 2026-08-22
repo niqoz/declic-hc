@@ -1,5 +1,6 @@
 import { clamp } from "./calculate.js";
 import { isValidOffPeakWindow } from "./heating.js";
+import { REFERENCE_RESIDENTS, scaleAppliancesForResidents } from "./occupants.js";
 import { INTERNAL_ESTIMATE_SOURCE } from "./presets.js";
 import type {
   Appliance,
@@ -17,7 +18,7 @@ import type {
 } from "./types.js";
 
 export const STATE_STORAGE_KEY = "hphc-simulator-state";
-export const CURRENT_STATE_VERSION = 8;
+export const CURRENT_STATE_VERSION = 9;
 
 type StorageReader = Pick<Storage, "getItem">;
 type StorageWriter = Pick<Storage, "setItem">;
@@ -196,7 +197,9 @@ export function migrateSimulationState(
     ? Math.min(12, Math.round(state.residents))
     : defaults.residents;
   const migratedAppliances = migrateAppliances(state, defaults.appliances, presets, annualKwh);
-  const appliances = migratedAppliances;
+  const appliances = Number(state.version) === 8
+    ? scaleAppliancesForResidents(migratedAppliances, REFERENCE_RESIDENTS, residents)
+    : migratedAppliances;
   const energyMode = validEnergyMode(state.energyMode) ? state.energyMode : "known-total";
   const defaultProjectedBackground = Math.max(0, annualKwh - appliances.reduce((sum, appliance) => sum + appliance.annualKwh, 0));
 

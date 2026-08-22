@@ -9,6 +9,7 @@ import {
 import { confidenceLabel, getApplianceCalibration } from "./simulation/calibration";
 import { estimateCoolingProfile } from "./simulation/cooling";
 import { estimateHeating, offPeakDurationMinutes, updateOffPeakWindowTime } from "./simulation/heating";
+import { REFERENCE_RESIDENTS, scaleAppliancesForResidents } from "./simulation/occupants";
 import {
   APPLIANCE_PRESETS,
   DEFAULT_APPLIANCES,
@@ -94,7 +95,7 @@ const DEFAULT_SIMULATOR_STATE: SimulatorState = {
   annualKwh: HOUSEHOLD_REFERENCE_KWH,
   energyMode: "known-total",
   projectedBackgroundKwh: HOUSEHOLD_REFERENCE_KWH - DEFAULT_APPLIANCES.reduce((sum, appliance) => sum + appliance.annualKwh, 0),
-  residents: 2,
+  residents: REFERENCE_RESIDENTS,
   backgroundHcShare: 25,
   appliances: DEFAULT_APPLIANCES,
   heating: {
@@ -130,7 +131,8 @@ export default function Home() {
   const [annualKwh, setAnnualKwh] = useState(4500);
   const [energyMode, setEnergyMode] = useState<EnergyMode>("known-total");
   const [projectedBackgroundKwh, setProjectedBackgroundKwh] = useState(DEFAULT_SIMULATOR_STATE.projectedBackgroundKwh);
-  const [residents, setResidents] = useState(2);
+  const [residents, setResidents] = useState(REFERENCE_RESIDENTS);
+  const residentsRef = useRef(REFERENCE_RESIDENTS);
   const nextApplianceIdRef = useRef(1000);
   const [backgroundHcShare, setBackgroundHcShare] = useState(25);
   const [appliances, setAppliances] = useState<Appliance[]>(DEFAULT_APPLIANCES);
@@ -163,6 +165,7 @@ export default function Home() {
     setEnergyMode(state.energyMode);
     setProjectedBackgroundKwh(state.projectedBackgroundKwh);
     setResidents(state.residents);
+    residentsRef.current = state.residents;
     setBackgroundHcShare(state.backgroundHcShare);
     setAppliances(state.appliances);
     setHeating(state.heating);
@@ -260,6 +263,14 @@ export default function Home() {
     setAnnualKwh(Math.max(0, value));
   }
 
+  function updateResidents(value: number) {
+    const nextResidents = Math.min(12, Math.max(1, Math.round(value || 1)));
+    const previousResidents = residentsRef.current;
+    residentsRef.current = nextResidents;
+    setResidents(nextResidents);
+    setAppliances((current) => scaleAppliancesForResidents(current, previousResidents, nextResidents));
+  }
+
   function updateApplianceKwh(id: number, annualKwhValue: number) {
     const appliance = appliances.find((item) => item.id === id);
     if (!appliance) return;
@@ -285,7 +296,7 @@ export default function Home() {
       calculationMode: "reference" as CalculationMode,
       source: { ...INTERNAL_ESTIMATE_SOURCE },
     };
-    const appliance = {
+    const [appliance] = scaleAppliancesForResidents([{
       id: nextApplianceIdRef.current++,
       type: model.type,
       name: model.name,
@@ -294,7 +305,7 @@ export default function Home() {
       highKwh: model.highKwh,
       calculationMode: model.calculationMode,
       source: { ...model.source },
-    };
+    }], REFERENCE_RESIDENTS, residents);
     setAppliances((current) => [...current, appliance]);
   }
 
@@ -386,6 +397,7 @@ export default function Home() {
     setEnergyMode(state.energyMode);
     setProjectedBackgroundKwh(state.projectedBackgroundKwh);
     setResidents(state.residents);
+    residentsRef.current = state.residents;
     setBackgroundHcShare(state.backgroundHcShare);
     setAppliances(state.appliances);
     setHeating(state.heating);
@@ -430,8 +442,16 @@ export default function Home() {
     const file = event.target.files?.[0];
     if (!file) return;
     readProfileFile(file).then((profile) => {
-      const migratedState = migrateSimulationState({ ...profile.state, version: 0 }, DEFAULT_SIMULATOR_STATE, APPLIANCE_PRESETS);
-      const migratedProfile = { ...profile, state: toStateInput(migratedState) };
+      const importedAppVersion = "importedAppVersion" in profile ? String(profile.importedAppVersion) : "";
+      const importedStateVersion = importedAppVersion === "0.9.0" ? 8 : CURRENT_STATE_VERSION;
+      const migratedState = migrateSimulationState({ ...profile.state, version: importedStateVersion }, DEFAULT_SIMULATOR_STATE, APPLIANCE_PRESETS);
+      const migratedProfile = {
+        id: profile.id,
+        name: profile.name,
+        state: toStateInput(migratedState),
+        createdAt: profile.createdAt,
+        updatedAt: profile.updatedAt,
+      };
       const updated: ProfilesStore = {
         ...profilesStore,
         profiles: [...profilesStore.profiles, migratedProfile],
@@ -529,6 +549,11 @@ export default function Home() {
                 <small><span>0 kWh</span><span>{number.format(annualSliderMax)} kWh</span></small>
               </label>
               <label className="household-slider">
+                <span>Habitants <strong>{residents} personne{residents > 1 ? "s" : ""}</strong></span>
+                <ThumbOnlyRange aria-label="Nombre d’habitants" min={1} max={12} step={1} value={residents} onValueChange={updateResidents} />
+                <small><span>1 personne</span><span>12 personnes</span></small>
+              </label>
+              <label className="household-slider">
                 <span>Puissance du compteur <strong>{power} kVA</strong></span>
                 <ThumbOnlyRange aria-label="Puissance du compteur" min={0} max={Math.max(0, tariffs.length - 1)} step={1} value={powerSliderIndex} onValueChange={(index) => setPower(tariffs[Math.round(index)]?.power ?? power)} />
                 <small><span>{tariffs[0]?.power ?? power} kVA</span><span>{tariffs.at(-1)?.power ?? power} kVA</span></small>
@@ -566,7 +591,7 @@ export default function Home() {
 
           <section className="panel appliance-panel">
             <div className="step-heading"><span>02</span><div><p>USAGES PILOTÉS</p><h2>Programmez les bons usages</h2></div></div>
-            <div className="behavior-guide"><span><strong>Usages indépendants</strong>Chaque valeur reste celle saisie ou celle du modèle de référence. Modifier le chauffage ou le total ne redimensionne aucun appareil.</span><div className="usage-balance"><b>{number.format(results.applianceKwh)} kWh</b><small>usages listés</small><b>{number.format(results.backgroundKwh)} kWh</b><small>reste du foyer</small></div></div>
+            <div className="behavior-guide"><span><strong>Dépendances ciblées</strong>La surface conditionne uniquement le chauffage. Les habitants conditionnent uniquement l’ECS, le lave-linge, le sèche-linge et le lave-vaisselle. Une valeur mesurée reste inchangée.</span><div className="usage-balance"><b>{number.format(results.applianceKwh)} kWh</b><small>usages listés</small><b>{number.format(results.backgroundKwh)} kWh</b><small>reste du foyer</small></div></div>
             <div className="appliance-list">{appliances.map((appliance) => {
               const calibration = getApplianceCalibration(appliance.type);
               const isSummerCooling = appliance.type === "air-conditioning";

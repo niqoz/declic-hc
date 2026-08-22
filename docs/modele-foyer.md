@@ -1,6 +1,6 @@
 # Modèle de foyer de Déclic HC
 
-Date de référence de cette méthode : 21 août 2026 (version 0.9.0).
+Date de référence de cette méthode : 22 août 2026 (version 0.9.1).
 
 ## Deux usages du simulateur
 
@@ -28,7 +28,9 @@ Source : règle conservatrice interne Déclic HC, adoptée le 21 août 2026. Les
 
 ## Valeurs des appareils
 
-Les valeurs centrales et les fourchettes proviennent des préréglages documentés ou de la saisie du foyer. Elles sont indépendantes : modifier le total, le chauffage, l’isolation ou la surface ne change jamais la consommation d’un appareil. L’ancien ajustement automatique selon le nombre d’habitants a été retiré, car ElecDom ne publie pas cette variable au grain logement et ne permet pas de justifier ce recalcul.
+Les valeurs centrales et les fourchettes proviennent des préréglages documentés ou de la saisie du foyer. La surface conditionne uniquement l’estimation du chauffage. Le nombre d’habitants conditionne uniquement les besoins d’eau chaude sanitaire et les cycles de lave-linge, sèche-linge et lave-vaisselle, proportionnellement à une référence de deux personnes. Les valeurs mesurées et les autres usages ne sont jamais redimensionnés.
+
+Ce coefficient par occupant est une convention pédagogique explicite demandée pour le modèle du foyer le 22 août 2026 ; il ne provient pas de la calibration ElecDom, qui ne publie pas le nombre d’habitants au grain logement.
 
 Source statistique des préréglages calibrés : jeu ElecDom de l’ADEME, données mises à jour le 4 mars 2022.
 

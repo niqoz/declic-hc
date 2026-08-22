@@ -17,6 +17,7 @@ import {
   offPeakDurationMinutes,
   updateOffPeakWindowTime,
 } from "../.test-dist/heating.js";
+import { scaleAppliancesForResidents } from "../.test-dist/occupants.js";
 import {
   CURRENT_STATE_VERSION,
   loadSimulationState,
@@ -249,6 +250,26 @@ test("ne redimensionne jamais un appareil à cause du chauffage ou du total", ()
   closeTo(withHeating.totalKwh, 4500);
 });
 
+test("les habitants ne redimensionnent que l'ECS et les appareils de cycle", () => {
+  const pool = { ...APPLIANCE_PRESETS.find((preset) => preset.type === "pool-pump"), id: 20 };
+  const vehicle = { ...APPLIANCE_PRESETS.find((preset) => preset.type === "electric-vehicle"), id: 21 };
+  const cooling = { ...APPLIANCE_PRESETS.find((preset) => preset.type === "air-conditioning"), id: 22 };
+  const measuredWaterHeater = { ...appliances[0], id: 23, calculationMode: "measured", annualKwh: 1000, lowKwh: 1000, highKwh: 1000 };
+  const source = [...appliances, pool, vehicle, cooling, measuredWaterHeater];
+  const scaled = scaleAppliancesForResidents(source, 2, 4);
+
+  for (const type of ["water-heater", "washing-machine", "dishwasher"]) {
+    const before = source.find((appliance) => appliance.type === type);
+    const after = scaled.find((appliance) => appliance.id === before.id);
+    closeTo(after.annualKwh, before.annualKwh * 2);
+  }
+  for (const id of [pool.id, vehicle.id, cooling.id, measuredWaterHeater.id]) {
+    closeTo(scaled.find((appliance) => appliance.id === id).annualKwh, source.find((appliance) => appliance.id === id).annualKwh);
+  }
+  const restored = scaleAppliancesForResidents(scaled, 4, 2);
+  source.forEach((appliance, index) => closeTo(restored[index].annualKwh, appliance.annualKwh));
+});
+
 test("gère une consommation nulle sans produire de valeur invalide", () => {
   const result = calculateSimulation({ annualKwh: 0, backgroundHcShare: 25, tariff, appliances: [] });
 
@@ -432,6 +453,15 @@ test("migre une sauvegarde plus ancienne et répare ses plages invalides", () =>
   assert.equal(migrated.activeOffPeakWindowId, 1);
 });
 
+test("active une seule fois la dépendance aux habitants pour un état 0.9", () => {
+  const previous = { ...defaultState, version: 8, residents: 1 };
+  const migrated = loadSimulationState({ getItem: () => JSON.stringify(previous) }, defaultState, APPLIANCE_PRESETS);
+  closeTo(migrated.appliances[0].annualKwh, appliances[0].annualKwh / 2);
+  closeTo(migrated.appliances[1].annualKwh, appliances[1].annualKwh / 2);
+  const reloaded = loadSimulationState({ getItem: () => JSON.stringify(migrated) }, defaultState, APPLIANCE_PRESETS);
+  closeTo(reloaded.appliances[0].annualKwh, migrated.appliances[0].annualKwh);
+});
+
 test("revient aux valeurs par défaut lorsque la sauvegarde est corrompue", () => {
   const state = loadSimulationState({ getItem: () => "{invalide" }, defaultState, APPLIANCE_PRESETS);
   assert.deepEqual(state, defaultState);
@@ -551,6 +581,7 @@ test("exporte et réimporte un profil sans perte", () => {
   assert.equal(imported.state.annualKwh, defaultState.annualKwh);
   assert.equal(imported.state.power, defaultState.power);
   assert.notEqual(imported.id, profile.id);
+  assert.equal(imported.importedAppVersion, "0.7.0");
 });
 
 test("rejette un fichier JSON invalide à l'import", () => {
@@ -596,7 +627,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.9.0");
+  assert.equal(version, "0.9.1");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);
@@ -609,7 +640,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   assert.match(pageSource, /results\.baseSubscriptionCost/);
   assert.match(pageSource, /results\.hcEnergyCost/);
   assert.doesNotMatch(pageSource, /<label>Consommation annuelle<div className="input-wrap">/);
-  assert.doesNotMatch(pageSource, /aria-label="Nombre d’habitants"/);
+  assert.match(pageSource, /aria-label="Nombre d’habitants"/);
   assert.match(pageSource, /Facture connue/);
   assert.match(pageSource, /Projection énergétique/);
   assert.match(cssSource, /grid-template-columns: minmax\(0, 1fr\) repeat\(5, 40px\)/);
