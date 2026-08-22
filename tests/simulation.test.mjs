@@ -631,7 +631,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.10.0");
+  assert.equal(version, "0.11.0");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);

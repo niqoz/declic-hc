@@ -23,7 +23,7 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image", images: ["/og.png"] },
 };
 
-export const viewport: Viewport = { themeColor: "#173b35", width: "device-width", initialScale: 1 };
+export const viewport: Viewport = { themeColor: "#20252a", width: "device-width", initialScale: 1 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return <html lang="fr"><body className={`${geistSans.variable} ${geistMono.variable}`}>{children}</body></html>;

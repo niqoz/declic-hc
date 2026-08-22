@@ -35,6 +35,9 @@ peut affecter l'interface, les ressources publiques ou la publication.
   contrat de version.
 - `github-pages/` est le point d'entrée de la version statique.
 - `public/` contient le manifeste, le service worker et les icônes PWA.
+- `app/fonts/` contient IBM Plex Sans Condensed et IBM Plex Mono (sous-ensemble
+  latin, licence OFL) embarqués par Vite : la typographie du panneau reste
+  disponible hors ligne, sans dépendance réseau.
 - `tools/calibrate_elecdom.py` produit les données de calibration et le rapport
   méthodologique.
 - `app/simulation/calibration.generated.ts` est généré : ne pas le modifier à la

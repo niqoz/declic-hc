@@ -1,0 +1,7 @@
+IBM Plex Sans Condensed et IBM Plex Mono
+Copyright © 2017 IBM Corp.
+Distribués sous SIL Open Font License 1.1 : https://openfontlicense.org
+
+Sous-ensemble latin téléchargé depuis Google Fonts le 22 août 2026.
+Fichiers embarqués pour que l'application conserve sa typographie hors ligne,
+sans dépendance réseau au moment de l'exécution.

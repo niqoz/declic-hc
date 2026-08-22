@@ -1,15 +1,15 @@
 {
   "name": "Déclic HC — Simulateur heures creuses",
   "short_name": "Déclic HC",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Comparez le tarif Base et l'option HP/HC selon les usages de votre foyer.",
   "start_url": "./",
   "id": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",
-  "background_color": "#0d1117",
-  "theme_color": "#0d1117",
+  "background_color": "#e4e6e1",
+  "theme_color": "#20252a",
   "lang": "fr",
   "categories": ["finance", "utilities", "education"],
   "icons": [
