@@ -627,7 +627,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.9.1");
+  assert.equal(version, "0.9.2");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);
@@ -650,6 +650,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   assert.match(pageSource, /Absent en journée/);
   assert.match(pageSource, /Télétravail \/ présent/);
   assert.match(pageSource, /results\.heatingHcKwh/);
+  assert.match(pageSource, /Total en heures creuses<strong>\{number\.format\(results\.hcKwh\)\} kWh<\/strong>/);
   assert.match(pageSource, /v\{APP_VERSION\}/);
   assert.equal(JSON.parse(manifestSource).version, version);
   assert.match(serviceWorkerSource, new RegExp(`declic-hc-v${version?.replaceAll(".", "\\.")}`));
