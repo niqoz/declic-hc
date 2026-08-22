@@ -10,6 +10,7 @@ import {
 import { confidenceLabel, getApplianceCalibration } from "./simulation/calibration";
 import { estimateCoolingProfile } from "./simulation/cooling";
 import { estimateHeating, HEATING_HIGH_RATIO, HEATING_LOW_RATIO, offPeakDurationMinutes, updateOffPeakWindowTime } from "./simulation/heating";
+import { shouldAdoptExternalValue } from "./simulation/numeric-field";
 import { REFERENCE_RESIDENTS, scaleAppliancesForResidents } from "./simulation/occupants";
 import {
   APPLIANCE_PRESETS,
@@ -396,7 +397,15 @@ export default function Home() {
     });
   }
 
-  function loadProfileIntoState(state: SimulatorStateInput) {
+  // Toute reprise de profil — bascule, suppression, import — repasse par la
+  // migration : c'est elle qui assainit les valeurs et garantit des objets
+  // neufs, donc un recalcul effectif de tous les usages.
+  function loadProfileIntoState(state: SimulatorStateInput, stateVersion = CURRENT_STATE_VERSION) {
+    const migrated = migrateSimulationState({ ...state, version: stateVersion }, DEFAULT_SIMULATOR_STATE, APPLIANCE_PRESETS);
+    applyStateToInterface(migrated);
+  }
+
+  function applyStateToInterface(state: SimulatorStateInput) {
     setTariffs(state.tariffs);
     setPower(state.power);
     setAnnualKwh(state.annualKwh);
@@ -426,8 +435,7 @@ export default function Home() {
     if (profile) {
       setProfilesStore(updated);
       saveProfilesStore(localStorage, updated);
-      const migrated = migrateSimulationState({ ...profile.state, version: 0 }, DEFAULT_SIMULATOR_STATE, APPLIANCE_PRESETS);
-      loadProfileIntoState(migrated);
+      loadProfileIntoState(profile.state);
     }
   }
 
@@ -702,9 +710,19 @@ type NumericInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "v
 function NumericInput({ value, onValueChange, onFocus, onBlur, ...props }: NumericInputProps) {
   const [draft, setDraft] = useState(String(value));
   const focused = useRef(false);
+  // Dernière valeur que ce champ a lui-même envoyée : tout ce qui en diffère
+  // vient d'un recalcul extérieur et doit s'imposer, focus ou non.
+  const emitted = useRef(value);
+
+  const commit = (next: number) => {
+    emitted.current = next;
+    onValueChange(next);
+  };
 
   useEffect(() => {
-    if (!focused.current) setDraft(String(value));
+    if (!shouldAdoptExternalValue(focused.current, value, emitted.current)) return;
+    emitted.current = value;
+    setDraft(String(value));
   }, [value]);
 
   return <input
@@ -717,13 +735,19 @@ function NumericInput({ value, onValueChange, onFocus, onBlur, ...props }: Numer
       setDraft(nextDraft);
       if (nextDraft.trim() === "") return;
       const parsed = Number(nextDraft);
-      if (Number.isFinite(parsed)) onValueChange(parsed);
+      if (Number.isFinite(parsed)) commit(parsed);
     }}
     onBlur={(event) => {
       focused.current = false;
       const parsed = Number(draft);
-      if (draft.trim() !== "" && Number.isFinite(parsed)) onValueChange(parsed);
-      setDraft(String(value));
+      if (draft.trim() !== "" && Number.isFinite(parsed)) {
+        // Le champ se referme sur ce que le foyer a réellement saisi, jamais
+        // sur une valeur d'un rendu précédent.
+        commit(parsed);
+        setDraft(String(parsed));
+      } else {
+        setDraft(String(value));
+      }
       onBlur?.(event);
     }}
   />;

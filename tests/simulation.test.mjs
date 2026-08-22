@@ -20,6 +20,7 @@ import {
   offPeakDurationMinutes,
   updateOffPeakWindowTime,
 } from "../.test-dist/heating.js";
+import { shouldAdoptExternalValue } from "../.test-dist/numeric-field.js";
 import { rescaleAppliancesToResidentExponent, residentExponent, scaleAppliancesForResidents } from "../.test-dist/occupants.js";
 import { baseOptionAvailability, baseOptionNotice, tariffGridFreshness, tariffGridNotice } from "../.test-dist/tariff.js";
 import {
@@ -742,6 +743,19 @@ test("le chauffage retenu contribue enfin à la fourchette de facture", () => {
   closeTo(estimate.highKwh / estimate.annualKwh, HEATING_HIGH_RATIO);
 });
 
+test("une valeur recalculée l'emporte sur une saisie en cours", () => {
+  // Champ au repos : il suit toujours la valeur affichée.
+  assert.equal(shouldAdoptExternalValue(false, 1294, 1294), true);
+  assert.equal(shouldAdoptExternalValue(false, 2242, 1294), true);
+  // Champ actif dont la valeur est celle qu'il vient d'envoyer : on n'interrompt
+  // pas la saisie.
+  assert.equal(shouldAdoptExternalValue(true, 1500, 1500), false);
+  // Champ actif, mais la valeur a changé ailleurs — habitants, profil rechargé,
+  // supprimé ou importé : le recalcul doit s'imposer.
+  assert.equal(shouldAdoptExternalValue(true, 2242, 1294), true);
+  assert.equal(shouldAdoptExternalValue(true, 0, 1294), true);
+});
+
 test("signale une grille de référence dépassée par une révision tarifaire", () => {
   const at = (iso) => tariffGridFreshness(new Date(`${iso}T12:00:00`));
   // Les tarifs réglementés sont révisés au 1er février et au 1er août.
@@ -855,7 +869,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.14.0");
+  assert.equal(version, "0.14.1");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);
