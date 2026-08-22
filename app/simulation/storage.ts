@@ -1,5 +1,5 @@
 import { clamp } from "./calculate.js";
-import { isValidOffPeakWindow } from "./heating.js";
+import { estimateHeating, isValidOffPeakWindow } from "./heating.js";
 import { REFERENCE_RESIDENTS, scaleAppliancesForResidents } from "./occupants.js";
 import { INTERNAL_ESTIMATE_SOURCE } from "./presets.js";
 import type {
@@ -18,7 +18,7 @@ import type {
 } from "./types.js";
 
 export const STATE_STORAGE_KEY = "hphc-simulator-state";
-export const CURRENT_STATE_VERSION = 9;
+export const CURRENT_STATE_VERSION = 10;
 
 type StorageReader = Pick<Storage, "getItem">;
 type StorageWriter = Pick<Storage, "setItem">;
@@ -200,6 +200,11 @@ export function migrateSimulationState(
   const appliances = Number(state.version) === 8
     ? scaleAppliancesForResidents(migratedAppliances, REFERENCE_RESIDENTS, residents)
     : migratedAppliances;
+  const heating = migrateHeating(state.heating, defaults.heating);
+  const estimatedHeatingKwh = estimateHeating(heating, offPeakWindows.find((window) => window.id === activeOffPeakWindowId) ?? offPeakWindows[0]).annualKwh;
+  const knownHeatingKwh = isFiniteNonNegative(state.knownHeatingKwh)
+    ? state.knownHeatingKwh
+    : heating.enabled ? Math.min(estimatedHeatingKwh, Math.max(0, annualKwh - appliances.reduce((sum, appliance) => sum + appliance.annualKwh, 0))) : 0;
   const energyMode = validEnergyMode(state.energyMode) ? state.energyMode : "known-total";
   const defaultProjectedBackground = Math.max(0, annualKwh - appliances.reduce((sum, appliance) => sum + appliance.annualKwh, 0));
 
@@ -212,12 +217,13 @@ export function migrateSimulationState(
     projectedBackgroundKwh: isFiniteNonNegative(state.projectedBackgroundKwh)
       ? state.projectedBackgroundKwh
       : defaultProjectedBackground,
+    knownHeatingKwh,
     residents,
     backgroundHcShare: Number.isFinite(state.backgroundHcShare)
       ? clamp(Number(state.backgroundHcShare), 0, 100)
       : defaults.backgroundHcShare,
     appliances,
-    heating: migrateHeating(state.heating, defaults.heating),
+    heating,
     offPeakWindows,
     activeOffPeakWindowId,
   };

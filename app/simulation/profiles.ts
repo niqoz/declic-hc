@@ -8,7 +8,7 @@ import type {
 } from "./types.js";
 
 export const PROFILES_STORAGE_KEY = "hphc-profiles";
-export const PROFILES_STORE_VERSION = 4;
+export const PROFILES_STORE_VERSION = 5;
 const DEFAULT_PROFILE_NAME = "Ma simulation";
 
 type StorageReader = Pick<Storage, "getItem">;
@@ -36,6 +36,7 @@ function deepCloneState(state: SimulatorStateInput): SimulatorStateInput {
     annualKwh: state.annualKwh,
     energyMode: state.energyMode,
     projectedBackgroundKwh: state.projectedBackgroundKwh,
+    knownHeatingKwh: state.knownHeatingKwh,
     residents: state.residents,
     backgroundHcShare: state.backgroundHcShare,
     appliances: state.appliances.map((appliance) => ({ ...appliance, source: { ...appliance.source } })),
@@ -52,6 +53,7 @@ function stateInputFromState(state: SimulatorState): SimulatorStateInput {
     annualKwh: state.annualKwh,
     energyMode: state.energyMode,
     projectedBackgroundKwh: state.projectedBackgroundKwh,
+    knownHeatingKwh: state.knownHeatingKwh,
     residents: state.residents,
     backgroundHcShare: state.backgroundHcShare,
     appliances: state.appliances,

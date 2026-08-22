@@ -84,7 +84,7 @@ export type SimulationInput = {
 };
 
 export type SimulationWarning = {
-  code: "APPLIANCES_EXCEED_TOTAL" | "INVALID_INPUT" | "UNUSUAL_TARIFF";
+  code: "APPLIANCES_EXCEED_TOTAL" | "HEATING_CAPPED" | "INVALID_INPUT" | "UNUSUAL_TARIFF";
   message: string;
 };
 
@@ -138,6 +138,7 @@ export type SimulatorState = {
   annualKwh: number;
   energyMode: EnergyMode;
   projectedBackgroundKwh: number;
+  knownHeatingKwh: number;
   residents: number;
   backgroundHcShare: number;
   appliances: Appliance[];

@@ -26,7 +26,9 @@ export function calculateEnergyDistribution(
   const totalKwh = energyMode === "projected"
     ? nonNegative(projectedBackgroundKwh) + applianceKwh + declaredHeatingKwh
     : Math.max(safeAnnualKwh, applianceKwh);
-  const heatingKwh = energyMode === "projected" ? declaredHeatingKwh : 0;
+  const heatingKwh = energyMode === "projected"
+    ? declaredHeatingKwh
+    : Math.min(declaredHeatingKwh, Math.max(0, totalKwh - applianceKwh));
   const backgroundKwh = energyMode === "projected"
     ? nonNegative(projectedBackgroundKwh)
     : Math.max(0, totalKwh - applianceKwh - heatingKwh);
@@ -93,6 +95,8 @@ export function validateSimulationInput(input: SimulationInput, distribution?: E
   if ((input.energyMode ?? "known-total") === "known-total" && distribution) {
     if (distribution.declaredApplianceKwh > nonNegative(input.annualKwh)) {
       warnings.push({ code: "APPLIANCES_EXCEED_TOTAL", message: "Les usages listés dépassent le total saisi : ils sont conservés et le total calculé est relevé pour éviter toute réduction artificielle." });
+    } else if (distribution.heatingKwh < distribution.declaredHeatingKwh) {
+      warnings.push({ code: "HEATING_CAPPED", message: "La consommation de chauffage dépasse le solde disponible dans la facture connue : elle est plafonnée sans modifier les autres usages." });
     }
   }
   return warnings;

@@ -1,4 +1,4 @@
-const CACHE = "declic-hc-v0.9.2";
+const CACHE = "declic-hc-v0.10.0";
 const APP_SHELL = ["./", "./manifest.webmanifest", "./favicon.svg", "./icon-192.png", "./icon-512.png"]
   .map((path) => new URL(path, self.registration.scope).pathname);
 const OFFLINE_PAGE = new URL("./", self.registration.scope).pathname;

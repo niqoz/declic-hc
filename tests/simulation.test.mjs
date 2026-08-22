@@ -57,6 +57,7 @@ const defaultState = {
   annualKwh: 4500,
   energyMode: "known-total",
   projectedBackgroundKwh: 2987,
+  knownHeatingKwh: 0,
   residents: 2,
   backgroundHcShare: 25,
   appliances,
@@ -172,21 +173,23 @@ test("respecte la causalité des paramètres de chauffage en projection", () => 
 
 test("les choix de travaux ne changent pas une facture connue", () => {
   const window = { id: 1, start: "22:10", end: "06:10" };
-  const simulate = (patch) => calculateSimulation({
-    annualKwh: 4500,
-    energyMode: "known-total",
-    backgroundHcShare: 25,
-    tariff,
-    appliances,
-    heating: estimateHeating({ ...defaultState.heating, enabled: true, ...patch }, window),
-  });
+  const simulate = (patch) => {
+    const estimate = estimateHeating({ ...defaultState.heating, enabled: true, ...patch }, window);
+    return calculateSimulation({
+      annualKwh: 4500,
+      energyMode: "known-total",
+      backgroundHcShare: 25,
+      tariff,
+      appliances,
+      heating: { annualKwh: 1000, lowKwh: 1000, highKwh: 1000, hcShare: estimate.hcShare },
+    });
+  };
   const good = simulate({ insulation: "good", system: "heat-pump" });
   const poor = simulate({ insulation: "poor", system: "radiators" });
   closeTo(good.totalKwh, poor.totalKwh);
   closeTo(good.baseCost, poor.baseCost);
   closeTo(good.hphcCost, poor.hphcCost);
-  closeTo(good.heatingKwh, 0);
-  assert.ok(good.declaredHeatingKwh < poor.declaredHeatingKwh);
+  closeTo(good.heatingKwh, 1000);
 });
 
 test("conserve un bilan énergétique fini sur toute la grille de chauffage", () => {
@@ -246,8 +249,9 @@ test("ne redimensionne jamais un appareil à cause du chauffage ou du total", ()
     heating: { annualKwh: 9000, lowKwh: 7000, highKwh: 11000, hcShare: 30 },
   });
   closeTo(withoutHeating.applianceKwh, withHeating.applianceKwh);
-  closeTo(withHeating.heatingKwh, 0);
+  closeTo(withHeating.heatingKwh, 4500 - withHeating.applianceKwh);
   closeTo(withHeating.totalKwh, 4500);
+  assert.equal(withHeating.warnings[0].code, "HEATING_CAPPED");
 });
 
 test("les habitants ne redimensionnent que l'ECS et les appareils de cycle", () => {
@@ -627,7 +631,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.9.2");
+  assert.equal(version, "0.10.0");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);
@@ -641,8 +645,9 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   assert.match(pageSource, /results\.hcEnergyCost/);
   assert.doesNotMatch(pageSource, /<label>Consommation annuelle<div className="input-wrap">/);
   assert.match(pageSource, /aria-label="Nombre d’habitants"/);
-  assert.match(pageSource, /Facture connue/);
-  assert.match(pageSource, /Projection énergétique/);
+  assert.match(pageSource, /Consommation annuelle connue/);
+  assert.doesNotMatch(pageSource, /Projection énergétique/);
+  assert.match(pageSource, /Consommation annuelle de chauffage dans la facture/);
   assert.match(cssSource, /grid-template-columns: minmax\(0, 1fr\) repeat\(5, 40px\)/);
   assert.match(cssSource, /\.icon-sm \{ width: 40px; height: 40px;/);
   assert.match(pageSource, /aria-label="Puissance du compteur" min=\{0\}/);

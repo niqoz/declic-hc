@@ -1,12 +1,12 @@
 # Modèle de foyer de Déclic HC
 
-Date de référence de cette méthode : 22 août 2026 (version 0.9.1).
+Date de référence de cette méthode : 22 août 2026 (version 0.10.0).
 
-## Deux usages du simulateur
+## Facture connue
 
-Le mode « facture connue » conserve la consommation annuelle saisie. Les appareils servent à décomposer ce total entre usages, HP et HC. Les paramètres techniques du chauffage y restent informatifs et ne modifient pas la facture : un changement d’isolation ne peut donc pas être interprété comme une économie de travaux. Les appareils ne sont jamais réduits ; s’ils dépassent le total saisi, le total calculé est relevé et un avertissement est affiché.
+Le simulateur conserve la consommation annuelle connue. Les appareils et une quantité annuelle de chauffage saisie décomposent ce total entre usages, HP et HC. Le chauffage retenu remplace une partie du « reste du foyer » et sa part HC provient du recouvrement naturel avec la plage tarifaire. Les paramètres techniques fournissent une estimation que l’utilisateur peut reprendre, mais leur modification ne remplace jamais automatiquement la quantité de chauffage confirmée dans la facture.
 
-Le mode « projection énergétique » additionne explicitement la consommation de fond, les appareils et le chauffage. Dans ce mode, une meilleure isolation, une pompe à chaleur ou une surface plus faible réduisent bien le total et les deux factures. Les scénarios bas et haut font eux aussi varier le total projeté.
+Les appareils ne sont jamais réduits. Si le chauffage dépasse le solde disponible, lui seul est plafonné avec un avertissement. Si les appareils dépassent déjà le total saisi, le total calculé est relevé afin de préserver le bilan énergétique.
 
 ## Usages flexibles
 
