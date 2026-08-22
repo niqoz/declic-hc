@@ -309,7 +309,7 @@ def render_report(calibrations: dict, quality: dict) -> str:
         "dépasse le total du logement sont exclues. Les intervalles à 95 % reposent sur 3 000 "
         "rééchantillonnages bootstrap.",
         "",
-        "Deux exposants sont publiés à titre descriptif : celui ajusté contre la consommation du logement et celui ajusté contre le reste du foyer (`Général - appareil`), qui limite la corrélation mécanique. Aucun des deux n’est appliqué par la PWA : la valeur de référence d’un appareil n’y est pas redimensionnée par la consommation annuelle du logement. Seule la correction selon le nombre d’habitants l’est, par un exposant sous-linéaire propre à chaque usage. Elle reste une hypothèse pédagogique : le fichier ouvert ne fournit pas cette variable par logement.",
+        "Deux exposants sont publiés. Celui ajusté contre la consommation totale du logement reste descriptif. Celui ajusté contre le reste du foyer (`Général - appareil`), qui limite la corrélation mécanique, est celui qu’applique la PWA : il redimensionne la valeur de référence d’un appareil selon la consommation annuelle du foyer. Pour ne pas compter deux fois l’agrandissement du foyer, il s’applique à la consommation par habitant, la correction démographique traduisant à part le changement de taille. Ainsi, si consommation et habitants doublent ensemble, seule la correction démographique joue. Cette dernière reste une hypothèse pédagogique : le fichier ouvert ne fournit pas le nombre d’habitants par logement.",
         "",
         "## Règles de diffusion",
         "",

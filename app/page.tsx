@@ -11,7 +11,7 @@ import { confidenceLabel, getApplianceCalibration } from "./simulation/calibrati
 import { estimateCoolingProfile } from "./simulation/cooling";
 import { estimateHeating, HEATING_HIGH_RATIO, HEATING_LOW_RATIO, offPeakDurationMinutes, updateOffPeakWindowTime } from "./simulation/heating";
 import { shouldAdoptExternalValue } from "./simulation/numeric-field";
-import { REFERENCE_RESIDENTS, scaleAppliancesForResidents } from "./simulation/occupants";
+import { REFERENCE_HOUSEHOLD, REFERENCE_RESIDENTS, scaleAppliancesForHousehold } from "./simulation/occupants";
 import {
   APPLIANCE_PRESETS,
   DEFAULT_APPLIANCES,
@@ -139,6 +139,7 @@ export default function Home() {
   const [knownHeatingKwh, setKnownHeatingKwh] = useState(0);
   const [residents, setResidents] = useState(REFERENCE_RESIDENTS);
   const residentsRef = useRef(REFERENCE_RESIDENTS);
+  const annualKwhRef = useRef(HOUSEHOLD_REFERENCE_KWH);
   const nextApplianceIdRef = useRef(1000);
   const [backgroundHcShare, setBackgroundHcShare] = useState(25);
   const [appliances, setAppliances] = useState<Appliance[]>(DEFAULT_APPLIANCES);
@@ -171,6 +172,7 @@ export default function Home() {
     setKnownHeatingKwh(state.knownHeatingKwh);
     setResidents(state.residents);
     residentsRef.current = state.residents;
+    annualKwhRef.current = state.annualKwh;
     setBackgroundHcShare(state.backgroundHcShare);
     setAppliances(state.appliances);
     setHeating(state.heating);
@@ -266,16 +268,28 @@ export default function Home() {
     setAppliances((current) => current.map((appliance) => appliance.id === id ? { ...appliance, ...patch } : appliance));
   }
 
+  // Les usages calibrés suivent le foyer sur ses deux dimensions : sa
+  // consommation annuelle et son nombre d'habitants. Les deux réglages passent
+  // par la même mise à l'échelle, qui les combine sans compter deux fois
+  // l'agrandissement du foyer. Une valeur déclarée mesurée n'est jamais touchée.
+  function rescaleForHousehold(nextAnnualKwh: number, nextResidents: number) {
+    const from = { annualKwh: annualKwhRef.current, residents: residentsRef.current };
+    const to = { annualKwh: nextAnnualKwh, residents: nextResidents };
+    annualKwhRef.current = nextAnnualKwh;
+    residentsRef.current = nextResidents;
+    setAppliances((current) => scaleAppliancesForHousehold(current, from, to));
+  }
+
   function updateAnnualKwh(value: number) {
-    setAnnualKwh(Math.max(0, value));
+    const nextAnnualKwh = Math.max(0, value);
+    setAnnualKwh(nextAnnualKwh);
+    rescaleForHousehold(nextAnnualKwh, residentsRef.current);
   }
 
   function updateResidents(value: number) {
     const nextResidents = Math.min(12, Math.max(1, Math.round(value || 1)));
-    const previousResidents = residentsRef.current;
-    residentsRef.current = nextResidents;
     setResidents(nextResidents);
-    setAppliances((current) => scaleAppliancesForResidents(current, previousResidents, nextResidents));
+    rescaleForHousehold(annualKwhRef.current, nextResidents);
   }
 
   function updateApplianceKwh(id: number, annualKwhValue: number) {
@@ -303,7 +317,7 @@ export default function Home() {
       calculationMode: "reference" as CalculationMode,
       source: { ...INTERNAL_ESTIMATE_SOURCE },
     };
-    const [appliance] = scaleAppliancesForResidents([{
+    const [appliance] = scaleAppliancesForHousehold([{
       id: nextApplianceIdRef.current++,
       type: model.type,
       name: model.name,
@@ -312,7 +326,7 @@ export default function Home() {
       highKwh: model.highKwh,
       calculationMode: model.calculationMode,
       source: { ...model.source },
-    }], REFERENCE_RESIDENTS, residents);
+    }], REFERENCE_HOUSEHOLD, { annualKwh, residents });
     setAppliances((current) => [...current, appliance]);
   }
 
@@ -412,6 +426,7 @@ export default function Home() {
     setKnownHeatingKwh(state.knownHeatingKwh);
     setResidents(state.residents);
     residentsRef.current = state.residents;
+    annualKwhRef.current = state.annualKwh;
     setBackgroundHcShare(state.backgroundHcShare);
     setAppliances(state.appliances);
     setHeating(state.heating);

@@ -1,6 +1,6 @@
 # Modèle de foyer de Déclic HC
 
-Date de référence de cette méthode : 22 août 2026 (version 0.14.0).
+Date de référence de cette méthode : 22 août 2026 (version 0.15.0).
 
 ## Facture connue
 
@@ -44,9 +44,13 @@ Source : règle conservatrice interne Déclic HC, adoptée le 21 août 2026, pon
 
 ## Valeurs des appareils
 
-Les valeurs centrales et les fourchettes proviennent des préréglages documentés ou de la saisie du foyer. La surface conditionne uniquement l’estimation du chauffage. Le nombre d’habitants conditionne uniquement les besoins d’eau chaude sanitaire et les cycles de lave-linge, sèche-linge et lave-vaisselle, par rapport à une référence de deux personnes. Les valeurs mesurées et les autres usages ne sont jamais redimensionnés.
+Les valeurs centrales et les fourchettes proviennent des préréglages documentés ou de la saisie du foyer. La surface conditionne l’estimation du chauffage et le dimensionnement de la climatisation. L’eau chaude sanitaire et les cycles de lave-linge, sèche-linge et lave-vaisselle suivent le foyer sur ses deux dimensions : sa consommation annuelle et son nombre d’habitants, par rapport à un foyer de référence de 4 500 kWh/an pour deux personnes. Les valeurs mesurées et les autres usages ne sont jamais redimensionnés.
 
-Cette correction est sous-linéaire : la consommation est multipliée par le rapport des effectifs élevé à un exposant propre à chaque usage — 0,6 pour l’eau chaude sanitaire, 0,5 pour le sèche-linge, 0,45 pour le lave-linge et 0,4 pour le lave-vaisselle. Une part de ces postes est en effet indépendante du nombre d’habitants : pertes du ballon, cycles incompressibles. Un chauffe-eau de 1 294 kWh/an pour deux personnes passe ainsi à 2 242 kWh/an pour cinq, et non à 3 235 kWh/an comme le donnait la proportionnalité stricte des versions 0.10.0 et 0.11.0.
+La dépendance à la consommation annuelle est celle mesurée par ElecDom : exposant de 0,297 pour le chauffe-eau électrique, 0,443 pour le lave-linge, 0,352 pour le lave-vaisselle et 0,561 pour le sèche-linge, 0,4 à défaut de calibration exploitable. Elle s’applique à la consommation par habitant et non au total, afin que l’agrandissement du foyer ne soit pas compté deux fois : si consommation et habitants doublent ensemble, seule la correction démographique joue. Un chauffe-eau de 1 294 kWh/an dans un foyer de référence descend à 934 kWh/an à 1 500 kWh de consommation annuelle et monte à 1 732 kWh/an à 12 000 kWh. Le curseur de consommation est borné à 500 kWh pour cette mise à l’échelle : le ramener à zéro ne doit pas annuler définitivement les usages.
+
+Cette dépendance existait dans les premières versions, puis a été perdue lorsque les appareils sont passés à une consommation absolue. Elle est rétablie dans la version 0.15.0.
+
+La correction démographique est sous-linéaire : la consommation est multipliée par le rapport des effectifs élevé à un exposant propre à chaque usage — 0,6 pour l’eau chaude sanitaire, 0,5 pour le sèche-linge, 0,45 pour le lave-linge et 0,4 pour le lave-vaisselle. Une part de ces postes est en effet indépendante du nombre d’habitants : pertes du ballon, cycles incompressibles. Un chauffe-eau de 1 294 kWh/an pour deux personnes passe ainsi à 2 242 kWh/an pour cinq, et non à 3 235 kWh/an comme le donnait la proportionnalité stricte des versions 0.10.0 et 0.11.0.
 
 Ces exposants sont une convention pédagogique explicite demandée pour le modèle du foyer le 22 août 2026 ; ils ne proviennent pas de la calibration ElecDom, qui ne publie pas le nombre d’habitants au grain logement. Ils restent cohérents avec les exposants descriptifs qu’elle mesure, tous nettement inférieurs à 1.
 

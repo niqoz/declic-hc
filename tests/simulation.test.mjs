@@ -21,7 +21,15 @@ import {
   updateOffPeakWindowTime,
 } from "../.test-dist/heating.js";
 import { shouldAdoptExternalValue } from "../.test-dist/numeric-field.js";
-import { rescaleAppliancesToResidentExponent, residentExponent, scaleAppliancesForResidents } from "../.test-dist/occupants.js";
+import {
+  householdExponent,
+  householdScaleFactor,
+  REFERENCE_HOUSEHOLD,
+  rescaleAppliancesToResidentExponent,
+  residentExponent,
+  scaleAppliancesForHousehold,
+  scaleAppliancesForResidents,
+} from "../.test-dist/occupants.js";
 import { baseOptionAvailability, baseOptionNotice, tariffGridFreshness, tariffGridNotice } from "../.test-dist/tariff.js";
 import {
   CURRENT_STATE_VERSION,
@@ -756,6 +764,53 @@ test("une valeur recalculée l'emporte sur une saisie en cours", () => {
   assert.equal(shouldAdoptExternalValue(true, 0, 1294), true);
 });
 
+test("les usages calibrés suivent la consommation annuelle du foyer", () => {
+  const heavier = scaleAppliancesForHousehold(appliances, REFERENCE_HOUSEHOLD, { annualKwh: 12000, residents: 2 });
+  const lighter = scaleAppliancesForHousehold(appliances, REFERENCE_HOUSEHOLD, { annualKwh: 1500, residents: 2 });
+
+  appliances.forEach((appliance, index) => {
+    const exponent = householdExponent(appliance.type);
+    assert.ok(exponent > 0, `${appliance.type} devrait dépendre de la consommation du foyer`);
+    assert.ok(heavier[index].annualKwh > appliance.annualKwh, "un gros foyer consomme davantage");
+    assert.ok(lighter[index].annualKwh < appliance.annualKwh, "un petit foyer consomme moins");
+    // Nettement sous-linéaire : consommer 2,7 fois plus ne triple pas l'ECS.
+    assert.ok(heavier[index].annualKwh < appliance.annualKwh * 12000 / 4500);
+    closeTo(heavier[index].annualKwh, appliance.annualKwh * (12000 / 4500) ** exponent);
+    closeTo(heavier[index].lowKwh / appliance.lowKwh, heavier[index].annualKwh / appliance.annualKwh);
+  });
+
+  // Le foyer de référence ne bouge pas, et la mise à l'échelle est réversible.
+  const unchanged = scaleAppliancesForHousehold(appliances, REFERENCE_HOUSEHOLD, REFERENCE_HOUSEHOLD);
+  appliances.forEach((appliance, index) => closeTo(unchanged[index].annualKwh, appliance.annualKwh));
+  const restored = scaleAppliancesForHousehold(heavier, { annualKwh: 12000, residents: 2 }, REFERENCE_HOUSEHOLD);
+  appliances.forEach((appliance, index) => closeTo(restored[index].annualKwh, appliance.annualKwh));
+});
+
+test("ne compte pas deux fois l'agrandissement du foyer", () => {
+  const type = "water-heater";
+  // Consommation et habitants doublent ensemble : la consommation par habitant
+  // ne bouge pas, seule la correction démographique doit jouer.
+  const both = householdScaleFactor(type, REFERENCE_HOUSEHOLD, { annualKwh: 9000, residents: 4 });
+  closeTo(both, 2 ** residentExponent(type));
+
+  // Un curseur ramené à zéro est borné et reste réversible.
+  const emptied = scaleAppliancesForHousehold(appliances, REFERENCE_HOUSEHOLD, { annualKwh: 0, residents: 2 });
+  emptied.forEach((appliance, index) => {
+    assert.ok(appliance.annualKwh > 0, "aucun usage ne doit être annulé");
+    assert.ok(appliance.annualKwh < appliances[index].annualKwh);
+  });
+  const back = scaleAppliancesForHousehold(emptied, { annualKwh: 0, residents: 2 }, REFERENCE_HOUSEHOLD);
+  appliances.forEach((appliance, index) => closeTo(back[index].annualKwh, appliance.annualKwh));
+
+  // Une valeur mesurée et un usage indépendant du foyer restent intacts.
+  const measured = { ...appliances[0], id: 60, calculationMode: "measured" };
+  const vehicle = { ...APPLIANCE_PRESETS.find((preset) => preset.type === "electric-vehicle"), id: 61 };
+  const kept = scaleAppliancesForHousehold([measured, vehicle], REFERENCE_HOUSEHOLD, { annualKwh: 12000, residents: 5 });
+  closeTo(kept[0].annualKwh, measured.annualKwh);
+  closeTo(kept[1].annualKwh, vehicle.annualKwh);
+  assert.equal(householdExponent("electric-vehicle"), 0);
+});
+
 test("signale une grille de référence dépassée par une révision tarifaire", () => {
   const at = (iso) => tariffGridFreshness(new Date(`${iso}T12:00:00`));
   // Les tarifs réglementés sont révisés au 1er février et au 1er août.
@@ -869,7 +924,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.14.1");
+  assert.equal(version, "0.15.0");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);
