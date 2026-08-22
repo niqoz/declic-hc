@@ -17,7 +17,8 @@ import {
   offPeakDurationMinutes,
   updateOffPeakWindowTime,
 } from "../.test-dist/heating.js";
-import { scaleAppliancesForResidents } from "../.test-dist/occupants.js";
+import { rescaleAppliancesToResidentExponent, residentExponent, scaleAppliancesForResidents } from "../.test-dist/occupants.js";
+import { baseOptionAvailability, baseOptionNotice } from "../.test-dist/tariff-availability.js";
 import {
   CURRENT_STATE_VERSION,
   loadSimulationState,
@@ -115,7 +116,7 @@ test("estime séparément le chauffage selon la surface, le système et l'occupa
   const away = estimateHeating({ ...standard, occupancy: "away" }, window);
   const home = estimateHeating({ ...standard, occupancy: "home" }, window);
 
-  closeTo(radiators.annualKwh / heatPump.annualKwh, 2.9);
+  closeTo(radiators.annualKwh / heatPump.annualKwh, 3.6);
   assert.ok(radiators.lowKwh < radiators.annualKwh && radiators.highKwh > radiators.annualKwh);
   assert.ok(away.annualKwh < home.annualKwh);
   assert.ok(away.hcShare > home.hcShare);
@@ -129,12 +130,22 @@ test("ne place en HC que le chauffage ayant naturellement lieu dans la plage", (
   const mixed = estimateHeating({ ...base, occupancy: "mixed" }, window);
   const home = estimateHeating({ ...base, occupancy: "home" }, window);
 
-  closeTo(away.hcShare, 31.0171, 0.01);
-  closeTo(mixed.hcShare, 30.1961, 0.01);
-  closeTo(home.hcShare, 29.0429, 0.01);
-  assert.ok(away.hcShare > home.hcShare);
-  closeTo(away.annualKwh, 3831.81, 0.1);
-  closeTo(home.annualKwh, 4092.28, 0.1);
+  closeTo(away.hcShare, 39.7754, 0.01);
+  closeTo(mixed.hcShare, 38.7225, 0.01);
+  closeTo(home.hcShare, 37.2437, 0.01);
+  assert.ok(away.hcShare > mixed.hcShare && mixed.hcShare > home.hcShare);
+  // La correction porte sur la répartition, pas sur l'ampleur déjà calibrée.
+  closeTo(away.annualKwh, 3831.81, 0.01);
+  closeTo(home.annualKwh, 4092.28, 0.01);
+
+  // Les nuits sont les heures les plus froides : leur besoin pèse davantage que
+  // leur seule durée dans la journée, sans quoi le modèle défavorise les HC.
+  const mechanicalShare = 8 / 24 * 100;
+  for (const estimate of [away, mixed, home]) assert.ok(estimate.hcShare > mechanicalShare);
+
+  // Plus il fait froid, moins l'écart jour/nuit pèse dans le besoin total.
+  const cold = estimateHeating({ ...base, occupancy: "away", altitude: "high" }, window);
+  assert.ok(cold.hcShare < away.hcShare && cold.hcShare > mechanicalShare);
 });
 
 test("respecte la causalité des paramètres de chauffage en projection", () => {
@@ -265,7 +276,10 @@ test("les habitants ne redimensionnent que l'ECS et les appareils de cycle", () 
   for (const type of ["water-heater", "washing-machine", "dishwasher"]) {
     const before = source.find((appliance) => appliance.type === type);
     const after = scaled.find((appliance) => appliance.id === before.id);
-    closeTo(after.annualKwh, before.annualKwh * 2);
+    closeTo(after.annualKwh, before.annualKwh * 2 ** residentExponent(type));
+    assert.ok(after.annualKwh < before.annualKwh * 2, "la croissance doit rester sous-linéaire");
+    closeTo(after.lowKwh / before.lowKwh, after.annualKwh / before.annualKwh);
+    closeTo(after.highKwh / before.highKwh, after.annualKwh / before.annualKwh);
   }
   for (const id of [pool.id, vehicle.id, cooling.id, measuredWaterHeater.id]) {
     closeTo(scaled.find((appliance) => appliance.id === id).annualKwh, source.find((appliance) => appliance.id === id).annualKwh);
@@ -460,8 +474,8 @@ test("migre une sauvegarde plus ancienne et répare ses plages invalides", () =>
 test("active une seule fois la dépendance aux habitants pour un état 0.9", () => {
   const previous = { ...defaultState, version: 8, residents: 1 };
   const migrated = loadSimulationState({ getItem: () => JSON.stringify(previous) }, defaultState, APPLIANCE_PRESETS);
-  closeTo(migrated.appliances[0].annualKwh, appliances[0].annualKwh / 2);
-  closeTo(migrated.appliances[1].annualKwh, appliances[1].annualKwh / 2);
+  closeTo(migrated.appliances[0].annualKwh, appliances[0].annualKwh * 0.5 ** residentExponent(appliances[0].type));
+  closeTo(migrated.appliances[1].annualKwh, appliances[1].annualKwh * 0.5 ** residentExponent(appliances[1].type));
   const reloaded = loadSimulationState({ getItem: () => JSON.stringify(migrated) }, defaultState, APPLIANCE_PRESETS);
   closeTo(reloaded.appliances[0].annualKwh, migrated.appliances[0].annualKwh);
 });
@@ -619,6 +633,55 @@ test("sauvegarde et recharge un store de profils", () => {
   assert.equal(reloaded.activeProfileId, reloaded.profiles[0].id);
 });
 
+test("remplace la mise à l'échelle linéaire des états 9 et 10 par l'exposant", () => {
+  const residents = 5;
+  const ratio = residents / 2;
+  // Un état 0.11 stockait les usages redimensionnés proportionnellement.
+  const linear = appliances.map((appliance) => ({
+    ...appliance,
+    annualKwh: appliance.annualKwh * ratio,
+    lowKwh: appliance.lowKwh * ratio,
+    highKwh: appliance.highKwh * ratio,
+  }));
+  const previous = { ...defaultState, version: 10, residents, appliances: linear };
+  const migrated = loadSimulationState({ getItem: () => JSON.stringify(previous) }, defaultState, APPLIANCE_PRESETS);
+
+  migrated.appliances.forEach((appliance, index) => {
+    closeTo(appliance.annualKwh, appliances[index].annualKwh * ratio ** residentExponent(appliance.type));
+    assert.ok(appliance.annualKwh < linear[index].annualKwh, "la correction doit réduire les grands foyers");
+  });
+  // La migration ne doit jouer qu'une fois.
+  const reloaded = loadSimulationState({ getItem: () => JSON.stringify(migrated) }, defaultState, APPLIANCE_PRESETS);
+  migrated.appliances.forEach((appliance, index) => closeTo(reloaded.appliances[index].annualKwh, appliance.annualKwh));
+});
+
+test("laisse intactes les valeurs mesurées et les usages indépendants du foyer", () => {
+  const measured = { ...appliances[0], id: 40, calculationMode: "measured", annualKwh: 1000, lowKwh: 1000, highKwh: 1000 };
+  const pool = { ...APPLIANCE_PRESETS.find((preset) => preset.type === "pool-pump"), id: 41 };
+  const rescaled = rescaleAppliancesToResidentExponent([measured, pool], 6);
+
+  closeTo(rescaled[0].annualKwh, measured.annualKwh);
+  closeTo(rescaled[1].annualKwh, pool.annualKwh);
+  closeTo(rescaleAppliancesToResidentExponent(appliances, 2)[0].annualKwh, appliances[0].annualKwh);
+});
+
+test("signale l'extinction de l'option Base au-delà de 6 kVA", () => {
+  assert.deepEqual(baseOptionAvailability(3), { status: "available" });
+  assert.deepEqual(baseOptionAvailability(6), { status: "available" });
+  assert.equal(baseOptionAvailability(9).status, "closed");
+  assert.equal(baseOptionAvailability(15).status, "closed");
+  assert.equal(baseOptionAvailability(18).status, "removed");
+  assert.equal(baseOptionAvailability(36).status, "removed");
+  // Une grille importée hors du Tarif Bleu résidentiel ne doit rien affirmer.
+  assert.deepEqual(baseOptionAvailability(45), { status: "available" });
+  assert.deepEqual(baseOptionAvailability(Number.NaN), { status: "available" });
+
+  assert.equal(baseOptionNotice(6), null);
+  assert.match(baseOptionNotice(9), /9 kVA/);
+  assert.match(baseOptionNotice(9), /1er février 2026/);
+  assert.match(baseOptionNotice(24), /1er février 2027/);
+});
+
 test("utilise le même numéro de version dans la PWA, le cache et le paquet", async () => {
   const [versionSource, pageSource, cssSource, manifestSource, serviceWorkerSource, packageSource, lockSource] = await Promise.all([
     readFile(new URL("../app/version.ts", import.meta.url), "utf8"),
@@ -631,7 +694,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.11.1");
+  assert.equal(version, "0.12.0");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);

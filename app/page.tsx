@@ -29,6 +29,7 @@ import {
   upsertProfile,
 } from "./simulation/profiles";
 import { CURRENT_STATE_VERSION, migrateSimulationState } from "./simulation/storage";
+import { baseOptionNotice } from "./simulation/tariff-availability";
 import type {
   Appliance,
   AppliancePreset,
@@ -64,6 +65,13 @@ const DEFAULT_HC_WINDOWS: OffPeakWindow[] = [
   { id: 2, start: "22:10", end: "06:10" },
   { id: 3, start: "22:45", end: "06:45" },
   { id: 4, start: "23:45", end: "07:45" },
+];
+
+// Version d'état embarquée par chaque génération de fichier exporté, l'export ne
+// portant que le numéro de version de l'application.
+const IMPORT_STATE_VERSIONS: [RegExp, number][] = [
+  [/^0\.9\./, 8],
+  [/^0\.(10|11)\./, 10],
 ];
 
 const euros = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
@@ -441,7 +449,7 @@ export default function Home() {
     if (!file) return;
     readProfileFile(file).then((profile) => {
       const importedAppVersion = "importedAppVersion" in profile ? String(profile.importedAppVersion) : "";
-      const importedStateVersion = importedAppVersion === "0.9.0" ? 8 : CURRENT_STATE_VERSION;
+      const importedStateVersion = IMPORT_STATE_VERSIONS.find(([pattern]) => pattern.test(importedAppVersion))?.[1] ?? CURRENT_STATE_VERSION;
       const migratedState = migrateSimulationState({ ...profile.state, version: importedStateVersion }, DEFAULT_SIMULATOR_STATE, APPLIANCE_PRESETS);
       const migratedProfile = {
         id: profile.id,
@@ -486,6 +494,7 @@ export default function Home() {
     if (next) loadProfileIntoState(next.state);
   }
 
+  const baseNotice = baseOptionNotice(power);
   const verdictPositive = results.delta > 1;
   const verdictNeutral = Math.abs(results.delta) <= 1;
   const annualSliderMax = Math.max(20000, Math.ceil(annualKwh / 5000) * 5000);
@@ -525,7 +534,7 @@ export default function Home() {
           <Field label="Heures pleines" suffix="€/kWh" value={activeTariff.hpPrice} step={0.0001} onChange={(v) => updateTariff("hpPrice", v)} />
           <Field label="Heures creuses" suffix="€/kWh" value={activeTariff.hcPrice} step={0.0001} onChange={(v) => updateTariff("hcPrice", v)} />
         </div>
-        <p className="source-note">Préremplie avec le Tarif Bleu résidentiel EDF Corse TTC au 1er août 2026. Toutes les valeurs restent modifiables.</p>
+        <p className="source-note">Préremplie avec le Tarif Bleu résidentiel EDF Corse TTC au 1er août 2026 : l’abonnement y est identique en Base et en HP/HC. Au-delà de 6 kVA, l’option Base est en extinction. Toutes les valeurs restent modifiables.</p>
       </section>}
 
       <section className="simulator-grid">
@@ -562,7 +571,7 @@ export default function Home() {
                   <small><span>10 m²</span><span>250 m²</span></small>
                 </label>
                 <div className="heating-fields">
-                  <label>Système<select value={heating.system} onChange={(event) => updateHeating({ system: event.target.value as HeatingSettings["system"] })}><option value="radiators">Radiateurs électriques</option><option value="heat-pump">Pompe à chaleur</option></select></label>
+                  <label>Système<select value={heating.system} onChange={(event) => updateHeating({ system: event.target.value as HeatingSettings["system"] })}><option value="radiators">Radiateurs électriques</option><option value="heat-pump">Pompe à chaleur / clim réversible</option></select></label>
                   <label>Logement<select value={heating.dwellingType} onChange={(event) => updateHeating({ dwellingType: event.target.value as HeatingSettings["dwellingType"] })}><option value="apartment">Appartement</option><option value="house">Maison</option></select></label>
                   <label>Isolation<select value={heating.insulation} onChange={(event) => updateHeating({ insulation: event.target.value as HeatingSettings["insulation"] })}><option value="good">Bonne</option><option value="standard">Standard</option><option value="poor">Faible</option></select></label>
                   <label>Altitude<select value={heating.altitude} onChange={(event) => updateHeating({ altitude: event.target.value as HeatingSettings["altitude"] })}><option value="low">Moins de 400 m</option><option value="medium">400 à 800 m</option><option value="high">Plus de 800 m</option></select></label>
@@ -634,6 +643,7 @@ export default function Home() {
           </div>
           <div className="distribution"><div className="distribution-title"><span>Répartition HP / HC<small>Total connu : {number.format(results.totalKwh)} kWh · plage {formatTime(activeOffPeakWindow.start)}–{formatTime(activeOffPeakWindow.end)}</small></span><strong>{results.share.toFixed(0)} % en HC</strong></div><div className="bar"><span style={{ width: `${results.share}%` }} /></div><div className="bar-legend"><span>Heures creuses · {number.format(results.hcKwh)} kWh</span><span>Heures pleines · {number.format(results.hpKwh)} kWh</span></div><div className="energy-breakdown"><span>Total en heures creuses<strong>{number.format(results.hcKwh)} kWh</strong></span><span>Usages listés<strong>{number.format(results.applianceKwh)} kWh</strong></span><span>Reste du foyer<strong>{number.format(results.backgroundKwh)} kWh</strong></span><span>Chauffage<strong>{number.format(results.heatingKwh)} kWh</strong></span><span>Chauffage en HC<strong>{number.format(results.heatingHcKwh)} kWh</strong></span><span>Appareils en HC<strong>{number.format(results.scheduledHc)} kWh</strong></span></div></div>
           <div className="threshold"><span className="threshold-icon">◎</span><p><strong>Votre point d’équilibre</strong><br />{breakEvenText}</p></div>
+          {baseNotice && <p className="base-extinction"><span aria-hidden="true">⚠</span> {baseNotice}</p>}
           <p className="disclaimer"><strong>Total inclus :</strong> abonnement, énergie et taxes déjà intégrées aux tarifs TTC EDF Corse. Non inclus : services ou remises propres au contrat, régularisations et changements de tarif au cours des 12 mois. Comparez l’estimation à une facture réelle avant toute décision contractuelle.</p>
         </aside>
       </section>

@@ -1,13 +1,25 @@
 import { clamp } from "./calculate.js";
-import type { HeatingEstimate, HeatingSettings, OccupancyProfile, OffPeakWindow } from "./types.js";
+import type { AltitudeBand, HeatingEstimate, HeatingSettings, OccupancyProfile, OffPeakWindow } from "./types.js";
 
 // Hypothèses pédagogiques H3 à recalibrer sur les DPE corses : besoin électrique
 // direct central par m², avant correction logement, altitude et présence.
 const DIRECT_HEATING_KWH_M2 = { good: 35, standard: 60, poor: 95 } as const;
 const DWELLING_FACTOR = { apartment: 0.82, house: 1.12 } as const;
 const ALTITUDE_FACTOR = { low: 1, medium: 1.22, high: 1.48 } as const;
-const HEAT_PUMP_SCOP = 2.9;
-const ECO_DEMAND_RATIO = 7 / 9; // 17 °C au lieu de 19 °C pour 10 °C extérieurs.
+// SCOP d'une pompe à chaleur ou d'une climatisation réversible récente en zone
+// H3, où la température extérieure de la saison de chauffe reste douce.
+export const HEAT_PUMP_SCOP = 3.6;
+
+// Profil standardisé : 19 °C en confort, 17 °C la nuit et pendant les absences.
+const COMFORT_SETPOINT_C = 19;
+const ECO_SETPOINT_C = 17;
+// Journée type de la saison de chauffe, en °C : sinusoïde de moyenne dépendante
+// de l'altitude, minimale à 5 h et maximale à 17 h. Le besoin instantané est
+// proportionnel à l'écart entre la consigne et cette température extérieure, ce
+// qui rend aux heures nocturnes le poids que leur froideur leur donne.
+const WINTER_MEAN_OUTDOOR_C = { low: 10, medium: 7, high: 4 } as const;
+const WINTER_DAILY_SWING_C = 4;
+const COLDEST_MINUTE = 5 * 60;
 
 const timeToMinutes = (value: string) => {
   const [hours, minutes] = value.split(":").map(Number);
@@ -48,34 +60,33 @@ const isComfortPeriod = (profile: OccupancyProfile, weekday: number, minute: num
   return (minute >= 6 * 60 && minute < 8 * 60) || (minute >= 17 * 60 && minute < 23 * 60);
 };
 
-function computeHeatingDemand(profile: OccupancyProfile, window: OffPeakWindow) {
-  let comfortPeak = 0;
-  let comfortOffPeak = 0;
-  let ecoOffPeak = 0;
-  let ecoPeak = 0;
+export const outdoorTemperature = (minute: number, altitude: AltitudeBand) => (
+  WINTER_MEAN_OUTDOOR_C[altitude] - WINTER_DAILY_SWING_C * Math.cos(2 * Math.PI * (minute - COLDEST_MINUTE) / 1440)
+);
+
+function computeHeatingDemand(profile: OccupancyProfile, window: OffPeakWindow, altitude: AltitudeBand) {
+  let total = 0;
+  let offPeak = 0;
   for (let weekday = 0; weekday < 7; weekday += 1) {
     for (let minute = 0; minute < 1440; minute += 10) {
-      const comfort = isComfortPeriod(profile, weekday, minute);
-      const offPeak = isMinuteOffPeak(minute, window);
-      if (comfort) {
-        if (offPeak) comfortOffPeak++;
-        else comfortPeak++;
-      } else if (offPeak) ecoOffPeak += ECO_DEMAND_RATIO;
-      else ecoPeak += ECO_DEMAND_RATIO;
+      const setpoint = isComfortPeriod(profile, weekday, minute) ? COMFORT_SETPOINT_C : ECO_SETPOINT_C;
+      const demand = Math.max(0, setpoint - outdoorTemperature(minute, altitude));
+      total += demand;
+      // Sans équipement d'accumulation déclaré, le chauffage n'est compté en HC
+      // que lorsqu'il fonctionne naturellement pendant la plage tarifaire.
+      if (isMinuteOffPeak(minute, window)) offPeak += demand;
     }
   }
-  const total = comfortPeak + comfortOffPeak + ecoPeak + ecoOffPeak;
-  // Sans équipement d'accumulation déclaré, le chauffage n'est compté en HC
-  // que lorsqu'il fonctionne naturellement pendant la plage tarifaire.
-  const offPeak = comfortOffPeak + ecoOffPeak;
   return { total, offPeak };
 }
 
 export function estimateHeating(settings: HeatingSettings, window: OffPeakWindow): HeatingEstimate {
   if (!settings.enabled) return { annualKwh: 0, lowKwh: 0, highKwh: 0, hcShare: 0 };
   const surface = clamp(settings.surfaceM2, 10, 400);
-  const profileDemand = computeHeatingDemand(settings.occupancy, window);
-  const referenceDemand = computeHeatingDemand("mixed", window).total;
+  const profileDemand = computeHeatingDemand(settings.occupancy, window, settings.altitude);
+  // L'altitude se simplifie dans ce rapport : elle ne pèse sur l'ampleur du
+  // besoin qu'une seule fois, par ALTITUDE_FACTOR.
+  const referenceDemand = computeHeatingDemand("mixed", window, settings.altitude).total;
   const occupancyFactor = profileDemand.total / referenceDemand;
   const systemEfficiency = settings.system === "heat-pump" ? HEAT_PUMP_SCOP : 1;
   const annualKwh = surface

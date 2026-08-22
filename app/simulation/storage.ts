@@ -1,6 +1,6 @@
 import { clamp } from "./calculate.js";
 import { estimateHeating, isValidOffPeakWindow } from "./heating.js";
-import { REFERENCE_RESIDENTS, scaleAppliancesForResidents } from "./occupants.js";
+import { REFERENCE_RESIDENTS, rescaleAppliancesToResidentExponent, scaleAppliancesForResidents } from "./occupants.js";
 import { INTERNAL_ESTIMATE_SOURCE } from "./presets.js";
 import type {
   Appliance,
@@ -18,7 +18,7 @@ import type {
 } from "./types.js";
 
 export const STATE_STORAGE_KEY = "hphc-simulator-state";
-export const CURRENT_STATE_VERSION = 10;
+export const CURRENT_STATE_VERSION = 11;
 
 type StorageReader = Pick<Storage, "getItem">;
 type StorageWriter = Pick<Storage, "setItem">;
@@ -197,9 +197,14 @@ export function migrateSimulationState(
     ? Math.min(12, Math.round(state.residents))
     : defaults.residents;
   const migratedAppliances = migrateAppliances(state, defaults.appliances, presets, annualKwh);
-  const appliances = Number(state.version) === 8
+  const storedVersion = Number(state.version);
+  // Version 8 : la dépendance aux habitants n'avait pas encore été appliquée.
+  // Versions 9 et 10 : elle l'était de façon strictement proportionnelle.
+  const appliances = storedVersion === 8
     ? scaleAppliancesForResidents(migratedAppliances, REFERENCE_RESIDENTS, residents)
-    : migratedAppliances;
+    : storedVersion === 9 || storedVersion === 10
+      ? rescaleAppliancesToResidentExponent(migratedAppliances, residents)
+      : migratedAppliances;
   const heating = migrateHeating(state.heating, defaults.heating);
   const estimatedHeatingKwh = estimateHeating(heating, offPeakWindows.find((window) => window.id === activeOffPeakWindowId) ?? offPeakWindows[0]).annualKwh;
   const knownHeatingKwh = isFiniteNonNegative(state.knownHeatingKwh)
