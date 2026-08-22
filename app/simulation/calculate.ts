@@ -1,6 +1,7 @@
-import type { Appliance, BreakEvenResult, EnergyDistribution, EnergyMode, HeatingEstimate, SimulationInput, SimulationEstimate, SimulationResult, SimulationWarning, Tariff } from "./types.js";
+import type { Appliance, BreakEvenResult, DeltaSummary, EnergyDistribution, EnergyMode, HeatingEstimate, SimulationInput, SimulationEstimate, SimulationResult, SimulationWarning, Tariff } from "./types.js";
 
 export const HOUSEHOLD_REFERENCE_KWH = 4500;
+const NEUTRAL_DELTA_TOLERANCE = 1;
 
 export function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
@@ -100,6 +101,24 @@ export function validateSimulationInput(input: SimulationInput, distribution?: E
     }
   }
   return warnings;
+}
+
+// L'écart central n'a de sens qu'encadré : les scénarios bas et haut donnent
+// ses bornes. Le verdict ne tranche que si la fourchette entière reste du même
+// côté de zéro, un seuil fixe en euros n'ayant aucun rapport avec l'incertitude
+// réelle du modèle.
+export function summarizeDelta(result: {
+  delta: number;
+  lowEstimate: { delta: number };
+  highEstimate: { delta: number };
+}): DeltaSummary {
+  const bounds = [result.delta, result.lowEstimate.delta, result.highEstimate.delta].filter(Number.isFinite);
+  const low = Math.min(...bounds);
+  const high = Math.max(...bounds);
+  // Sans usage listé ni chauffage, la fourchette est vide : un écart inférieur
+  // à un euro par an ne mérite alors pas davantage de verdict.
+  const status = low > NEUTRAL_DELTA_TOLERANCE ? "positive" : high < -NEUTRAL_DELTA_TOLERANCE ? "negative" : "uncertain";
+  return { status, delta: result.delta, low, high, spread: high - low };
 }
 
 export function calculateSimulation(input: SimulationInput): SimulationResult {

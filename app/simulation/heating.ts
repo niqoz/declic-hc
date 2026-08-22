@@ -10,6 +10,12 @@ const ALTITUDE_FACTOR = { low: 1, medium: 1.22, high: 1.48 } as const;
 // H3, où la température extérieure de la saison de chauffe reste douce.
 export const HEAT_PUMP_SCOP = 3.6;
 
+// Incertitude du poste de chauffage, appliquée aussi bien à l'estimation du
+// modèle qu'à la quantité retenue dans la facture : personne ne connaît sa
+// consommation de chauffage à mieux que cet ordre de grandeur.
+export const HEATING_LOW_RATIO = 0.65;
+export const HEATING_HIGH_RATIO = 1.45;
+
 // Profil standardisé : 19 °C en confort, 17 °C la nuit et 16 °C pendant les
 // absences de journée. Le réduit de nuit reste modéré, la remise en confort du
 // matin devant rester courte ; une absence de journée autorise un réduit plus
@@ -102,8 +108,8 @@ export function estimateHeating(settings: HeatingSettings, window: OffPeakWindow
   const hcShare = profileDemand.total > 0 ? profileDemand.offPeak / profileDemand.total * 100 : 0;
   return {
     annualKwh,
-    lowKwh: annualKwh * 0.65,
-    highKwh: annualKwh * 1.45,
+    lowKwh: annualKwh * HEATING_LOW_RATIO,
+    highKwh: annualKwh * HEATING_HIGH_RATIO,
     hcShare,
   };
 }

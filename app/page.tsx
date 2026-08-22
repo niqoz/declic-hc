@@ -5,10 +5,11 @@ import {
   calculateSimulation,
   clamp,
   HOUSEHOLD_REFERENCE_KWH,
+  summarizeDelta,
 } from "./simulation/calculate";
 import { confidenceLabel, getApplianceCalibration } from "./simulation/calibration";
 import { estimateCoolingProfile } from "./simulation/cooling";
-import { estimateHeating, offPeakDurationMinutes, updateOffPeakWindowTime } from "./simulation/heating";
+import { estimateHeating, HEATING_HIGH_RATIO, HEATING_LOW_RATIO, offPeakDurationMinutes, updateOffPeakWindowTime } from "./simulation/heating";
 import { REFERENCE_RESIDENTS, scaleAppliancesForResidents } from "./simulation/occupants";
 import {
   APPLIANCE_PRESETS,
@@ -77,7 +78,6 @@ const IMPORT_STATE_VERSIONS: [RegExp, number][] = [
 const euros = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
 const preciseEuros = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", minimumFractionDigits: 2 });
 const number = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 });
-const decimal = new Intl.NumberFormat("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const validTime = (value: unknown): value is string => typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 const timeToMinutes = (value: string) => {
   const [hours, minutes] = value.split(":").map(Number);
@@ -239,11 +239,14 @@ export default function Home() {
       : appliance),
     [appliances, coolingProfile],
   );
+  // La quantité retenue reste le scénario central, mais elle garde la marge
+  // d'incertitude du poste : une consommation de chauffage n'est jamais connue
+  // au kWh près, même relevée sur une facture.
   const retainedHeating = useMemo(() => ({
     ...heatingEstimate,
     annualKwh: heating.enabled ? knownHeatingKwh : 0,
-    lowKwh: heating.enabled ? knownHeatingKwh : 0,
-    highKwh: heating.enabled ? knownHeatingKwh : 0,
+    lowKwh: heating.enabled ? knownHeatingKwh * HEATING_LOW_RATIO : 0,
+    highKwh: heating.enabled ? knownHeatingKwh * HEATING_HIGH_RATIO : 0,
   }), [heating.enabled, heatingEstimate, knownHeatingKwh]);
   const results = useMemo(
     () => calculateSimulation({ annualKwh, backgroundHcShare, tariff: activeTariff, appliances: modeledAppliances, heating: retainedHeating }),
@@ -496,8 +499,17 @@ export default function Home() {
     { tariffs, power, annualKwh, knownHeatingKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId },
     DEFAULT_SIMULATOR_STATE,
   );
-  const verdictPositive = results.delta > 1;
-  const verdictNeutral = Math.abs(results.delta) <= 1;
+  const summary = summarizeDelta(results);
+  const verdictPositive = summary.status === "positive";
+  const verdictUncertain = summary.status === "uncertain";
+  const hasRange = summary.spread >= 1;
+  const rangeText = !hasRange
+    ? null
+    : verdictUncertain
+      ? <>Selon les hypothèses basse et haute : de {euros.format(Math.abs(summary.low))} de surcoût à {euros.format(summary.high)} d’économie.</>
+      : verdictPositive
+        ? <>Économie comprise entre {euros.format(summary.low)} et {euros.format(summary.high)} selon les hypothèses basse et haute.</>
+        : <>Surcoût compris entre {euros.format(Math.abs(summary.high))} et {euros.format(Math.abs(summary.low))} selon les hypothèses basse et haute.</>;
   const annualSliderMax = Math.max(20000, Math.ceil(annualKwh / 5000) * 5000);
   const powerSliderIndex = Math.max(0, tariffs.findIndex((tariff) => tariff.power === power));
   const schedulesCustomized = offPeakWindows.length !== DEFAULT_HC_WINDOWS.length || offPeakWindows.some((window, index) => window.start !== DEFAULT_HC_WINDOWS[index]?.start || window.end !== DEFAULT_HC_WINDOWS[index]?.end);
@@ -586,7 +598,7 @@ export default function Home() {
                   <ThumbOnlyRange aria-label="Consommation annuelle de chauffage dans la facture" min={0} max={Math.max(annualKwh, 1000)} step={100} value={Math.min(knownHeatingKwh, Math.max(annualKwh, 1000))} onValueChange={setKnownHeatingKwh} />
                   <small><span>0 kWh</span><button type="button" className="button subtle" onClick={() => setKnownHeatingKwh(Math.min(heatingEstimate.annualKwh, Math.max(0, annualKwh - results.applianceKwh)))}>Utiliser l’estimation</button><span>{number.format(Math.max(annualKwh, 1000))} kWh</span></small>
                 </label>
-                <p className="heating-note">La quantité retenue est incluse dans le total annuel connu et remplace une partie du « reste du foyer ». Elle est répartie entre HP et HC selon le profil standardisé : 19 °C en confort, 17 °C la nuit et 16 °C pendant les absences de journée, le besoin de chaque heure étant pondéré par la température extérieure. Sans stockage thermique, seuls les besoins ayant naturellement lieu pendant la plage HC sont comptés en heures creuses. Estimation pédagogique H3 à affiner avec les <a href="https://www.data.corsica/explore/dataset/dpe-logements-existants-en-corse-depuis-juillet-2021/" target="_blank" rel="noreferrer">DPE corses</a>.</p>
+                <p className="heating-note">La quantité retenue est incluse dans le total annuel connu et remplace une partie du « reste du foyer ». Elle garde la marge d’incertitude du poste, qui alimente la fourchette de facture. Elle est répartie entre HP et HC selon le profil standardisé : 19 °C en confort, 17 °C la nuit et 16 °C pendant les absences de journée, le besoin de chaque heure étant pondéré par la température extérieure. Sans stockage thermique, seuls les besoins ayant naturellement lieu pendant la plage HC sont comptés en heures creuses. Estimation pédagogique H3 à affiner avec les <a href="https://www.data.corsica/explore/dataset/dpe-logements-existants-en-corse-depuis-juillet-2021/" target="_blank" rel="noreferrer">DPE corses</a>.</p>
               </>}
             </section>
             <label className="range-label"><span>Répartition totale en heures creuses <strong>{results.share.toFixed(0)} % · {number.format(results.hcKwh)} kWh/an</strong></span><ThumbOnlyRange aria-label="Répartition totale en heures creuses" min={results.minShare} max={results.maxShare} step={1} value={results.share} disabled={results.backgroundKwh <= 0} onValueChange={setTotalHcShare} /></label>
@@ -636,8 +648,8 @@ export default function Home() {
         <aside className="result-card" id="result">
           <p className="step light">VOTRE SIMULATION · {power} KVA</p>
           {isExample && <p className="example-notice">Résultat d’exemple : ajustez votre consommation, vos habitants et vos usages pour obtenir le vôtre.</p>}
-          <h2>{verdictPositive ? "Les heures creuses prennent l’avantage" : verdictNeutral ? "Les deux options sont presque à égalité" : "Le tarif Base reste devant"}</h2>
-          <div className={`saving ${verdictPositive ? "positive" : "negative"}`}><span>{verdictPositive ? "ÉCONOMIE ESTIMÉE" : verdictNeutral ? "ÉCART ESTIMÉ" : "SURCOÛT HP/HC ESTIMÉ"}<em>HP/HC − BASE</em></span><div className="lcd-readout"><strong>{results.delta > 0 ? "−" : "+"}{decimal.format(Math.abs(results.delta))}</strong><em>EUR / an</em></div><p><span>soit {preciseEuros.format(Math.abs(results.delta) / 12)} par mois</span><span>{number.format(results.totalKwh)} kWh/an</span></p></div>
+          <h2>{verdictPositive ? "Les heures creuses prennent l’avantage" : verdictUncertain ? "Trop serré pour trancher" : "Le tarif Base reste devant"}</h2>
+          <div className={`saving ${verdictPositive ? "positive" : verdictUncertain ? "uncertain" : "negative"}`}><span>{verdictPositive ? "ÉCONOMIE ESTIMÉE" : verdictUncertain ? "ÉCART ESTIMÉ" : "SURCOÛT HP/HC ESTIMÉ"}<em>HP/HC − BASE</em></span><div className="lcd-readout"><strong>{results.delta > 0 ? "−" : "+"}{number.format(Math.abs(results.delta))}</strong><em>EUR / an</em></div><p><span>soit {euros.format(Math.abs(results.delta) / 12)} par mois</span><span>{number.format(results.totalKwh)} kWh/an</span></p>{rangeText && <p className="saving-range">{rangeText}</p>}</div>
           <div className="cost-lines">
             <p>FACTURE EDF ANNUELLE ESTIMÉE · TTC</p>
             <article><span><strong>Option Base</strong><small>Abonnement {preciseEuros.format(results.baseSubscriptionCost)} + énergie {preciseEuros.format(results.baseEnergyCost)}</small></span><span className="cost-total"><strong>{preciseEuros.format(results.baseCost)}</strong><small>{preciseEuros.format(results.baseCost / 12)} / mois</small></span></article>

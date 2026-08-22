@@ -326,6 +326,11 @@ input[type="range"]:disabled { opacity: 0.4; cursor: not-allowed; }
 .lcd-readout strong { position: absolute; right: 62px; bottom: 0; font: 700 42px/52px var(--font-data); letter-spacing: 0.01em; font-variant-numeric: tabular-nums; color: var(--lcd-ink); }
 .lcd-readout em { position: absolute; right: 0; bottom: 9px; font: 600 11px var(--font-data); font-style: normal; letter-spacing: 0.05em; white-space: nowrap; color: #4b5344; }
 .saving p { margin: 9px 0 0; padding-top: 8px; border-top: 1px dashed var(--lcd-edge); display: flex; justify-content: space-between; gap: 10px; font: 500 10px var(--font-data); color: #4b5344; }
+.saving-range { font-size: 9px !important; letter-spacing: 0.02em; text-transform: none; }
+.saving.uncertain { background: #cdc9bb; border-color: #a9a493; }
+.saving.uncertain > span, .saving.uncertain p, .saving.uncertain .lcd-readout em { color: #4e4b3f; }
+.saving.uncertain p { border-top-color: #a9a493; }
+.saving.uncertain .lcd-readout strong { color: #5a5230; }
 .saving.negative .lcd-readout strong { color: #5d1f16; }
 .saving.negative { background: #cbbfb8; border-color: #a8998f; }
 .saving.negative > span, .saving.negative p, .saving.negative .lcd-readout em { color: #55403a; }

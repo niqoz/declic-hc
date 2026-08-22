@@ -110,6 +110,14 @@ export type BreakEvenResult =
   | { status: "above" | "below"; share: number }
   | { status: "always" | "never" | "equal"; share: null };
 
+export type DeltaSummary = {
+  status: "positive" | "negative" | "uncertain";
+  delta: number;
+  low: number;
+  high: number;
+  spread: number;
+};
+
 export type SimulationEstimate = EnergyDistribution & {
   baseCost: number;
   hphcCost: number;

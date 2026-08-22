@@ -7,12 +7,15 @@ import {
   calculateBreakEvenShare,
   calculateHphcCost,
   calculateSimulation,
+  summarizeDelta,
 } from "../.test-dist/calculate.js";
 import { APPLIANCE_PRESETS, DEFAULT_APPLIANCES } from "../.test-dist/presets.js";
 import { ELECDOM_DATA_QUALITY, getApplianceCalibration } from "../.test-dist/calibration.js";
 import { coolingDwellingFactor, estimateCoolingHcShare, estimateCoolingProfile } from "../.test-dist/cooling.js";
 import {
   estimateHeating,
+  HEATING_HIGH_RATIO,
+  HEATING_LOW_RATIO,
   isValidOffPeakWindow,
   offPeakDurationMinutes,
   updateOffPeakWindowTime,
@@ -684,6 +687,61 @@ test("signale l'extinction de l'option Base au-delà de 6 kVA", () => {
   assert.match(baseOptionNotice(24), /1er février 2027/);
 });
 
+test("encadre l'écart par les scénarios bas et haut", () => {
+  const result = calculateSimulation({ annualKwh: 4500, backgroundHcShare: 25, tariff, appliances });
+  const summary = summarizeDelta(result);
+
+  assert.equal(summary.status, "positive");
+  closeTo(summary.delta, result.delta);
+  // Le scénario central reste toujours à l'intérieur de la fourchette affichée.
+  assert.ok(summary.low <= summary.delta && summary.delta <= summary.high);
+  assert.ok(summary.low > 0, "les trois scénarios doivent rester favorables aux HC");
+  closeTo(summary.spread, summary.high - summary.low);
+  assert.ok(summary.spread > 40, "l'incertitude des usages doit être visible");
+});
+
+test("ne tranche pas quand la fourchette traverse zéro", () => {
+  const straddling = {
+    delta: 12,
+    lowEstimate: { delta: -30 },
+    highEstimate: { delta: 55 },
+  };
+  assert.equal(summarizeDelta(straddling).status, "uncertain");
+  assert.equal(summarizeDelta({ delta: 40, lowEstimate: { delta: 5 }, highEstimate: { delta: 90 } }).status, "positive");
+  assert.equal(summarizeDelta({ delta: -40, lowEstimate: { delta: -90 }, highEstimate: { delta: -5 } }).status, "negative");
+
+  // Sans usage listé ni chauffage la fourchette est vide : en dessous d'un euro
+  // par an, aucun verdict n'est prononcé.
+  const flat = calculateSimulation({ annualKwh: 4500, backgroundHcShare: 25.64, tariff, appliances: [] });
+  const summary = summarizeDelta(flat);
+  closeTo(summary.spread, 0);
+  assert.equal(summary.status, "uncertain");
+  assert.equal(summarizeDelta({ delta: -0.4, lowEstimate: { delta: -0.4 }, highEstimate: { delta: -0.4 } }).status, "uncertain");
+});
+
+test("le chauffage retenu contribue enfin à la fourchette de facture", () => {
+  const window = { id: 1, start: "21:40", end: "05:40" };
+  const estimate = estimateHeating({ ...defaultState.heating, enabled: true, surfaceM2: 100 }, window);
+  const retained = 5000;
+  // L'interface applique la marge relative du poste à la quantité retenue.
+  const heating = {
+    ...estimate,
+    annualKwh: retained,
+    lowKwh: retained * HEATING_LOW_RATIO,
+    highKwh: retained * HEATING_HIGH_RATIO,
+  };
+  const simulate = (heatingInput) => calculateSimulation({
+    annualKwh: 11000, backgroundHcShare: 25, tariff, appliances, heating: heatingInput,
+  });
+  const withRange = summarizeDelta(simulate(heating));
+  const withoutRange = summarizeDelta(simulate({ ...heating, lowKwh: retained, highKwh: retained }));
+
+  assert.ok(withRange.spread > withoutRange.spread, "le poste le plus incertain doit élargir la fourchette");
+  closeTo(withRange.delta, withoutRange.delta, 1e-9);
+  closeTo(estimate.lowKwh / estimate.annualKwh, HEATING_LOW_RATIO);
+  closeTo(estimate.highKwh / estimate.annualKwh, HEATING_HIGH_RATIO);
+});
+
 test("signale une grille de référence dépassée par une révision tarifaire", () => {
   const at = (iso) => tariffGridFreshness(new Date(`${iso}T12:00:00`));
   // Les tarifs réglementés sont révisés au 1er février et au 1er août.
@@ -797,7 +855,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.13.0");
+  assert.equal(version, "0.14.0");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);

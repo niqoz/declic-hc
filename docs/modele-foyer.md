@@ -1,6 +1,6 @@
 # Modèle de foyer de Déclic HC
 
-Date de référence de cette méthode : 22 août 2026 (version 0.13.0).
+Date de référence de cette méthode : 22 août 2026 (version 0.14.0).
 
 ## Facture connue
 
@@ -16,7 +16,7 @@ L'application s'ouvre sur un foyer d'exemple : 4 500 kWh/an, deux habitants, 6 k
 
 ## Usages flexibles
 
-Les appareils ajoutés par le foyer représentent volontairement des usages qu’il s’engage à programmer en heures creuses. Leur consommation centrale est donc placée à 100 % en HC, sauf la climatisation estivale. Les estimations basse et haute alimentent deux scénarios complémentaires de facture ; elles ne remplacent pas le scénario central.
+Les appareils ajoutés par le foyer représentent volontairement des usages qu’il s’engage à programmer en heures creuses. Leur consommation centrale est donc placée à 100 % en HC, sauf la climatisation estivale. Les estimations basse et haute alimentent deux scénarios complémentaires de facture ; elles ne remplacent pas le scénario central, elles l’encadrent.
 
 La climatisation estivale suit un profil diurne de 12 h à 22 h. Elle fonctionne toute cette période le week-end et lorsque le foyer est présent. Pour le profil absent, elle fonctionne de 17 h à 22 h en semaine ; le profil mixte ajoute deux journées complètes de télétravail. Seul le recouvrement réel de ces périodes avec la plage tarifaire est compté en HC. Le chauffage assuré par une climatisation réversible reste représenté séparément par le système « pompe à chaleur / clim réversible » du modèle de chauffage.
 
@@ -67,6 +67,16 @@ Source : grilles de prix du Tarif Bleu résidentiel EDF Corse, HT et TTC, applic
 L’état enregistré ne décrit qu’une facture connue. Le moteur de calcul sait aussi additionner des postes projetés sans total de référence, mode que les tests exercent, mais l’application ne l’expose pas et ne l’enregistre donc plus depuis la version 0.13.0.
 
 Le magasin de profils enregistre la version d’état qu’il a écrite. Les migrations d’un profil partent ainsi de sa version réelle, et non d’une version supposée : une correction déjà appliquée n’est pas rejouée, une correction manquante n’est pas sautée. Les magasins antérieurs à cette règle sont rattachés à leur version d’état connue par une table explicite.
+
+## Fourchette et verdict
+
+Chaque usage porte une estimation basse et une estimation haute. Le moteur rejoue la simulation entière sur chacune, ce qui donne deux factures complémentaires et donc deux écarts qui encadrent l’écart central. La carte de résultat affiche cette fourchette sous le montant : annoncer une économie au centime quand le modèle est incertain de plusieurs dizaines d’euros trompe davantage qu’un chiffre arrondi.
+
+Le chauffage y contribue depuis la version 0.14.0. La quantité retenue dans la facture reste le scénario central, mais elle porte la marge relative du poste — de 0,65 à 1,45 fois cette quantité, la même que celle du modèle d’estimation. Une consommation de chauffage n’est jamais connue au kWh près, même relevée sur une facture : c’est le poste le plus lourd et le plus incertain, et l’écraser à une valeur exacte donnait une fourchette artificiellement étroite.
+
+Le verdict découle de cette fourchette et non d’un seuil en euros. Les heures creuses ne prennent l’avantage que si les trois scénarios restent favorables, le tarif Base ne reste devant que si les trois lui sont favorables, et le résultat est annoncé comme trop serré pour trancher dès que la fourchette traverse zéro. Un foyer sans usage listé ni chauffage n’a pas de fourchette du tout : en dessous d’un euro par an, aucun verdict n’est alors prononcé.
+
+Source : convention pédagogique interne Déclic HC, adoptée le 22 août 2026.
 
 ## Point d’équilibre
 
