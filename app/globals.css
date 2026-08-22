@@ -364,6 +364,7 @@ input[type="range"]:disabled { opacity: 0.4; cursor: not-allowed; }
 .threshold p { margin: 0; color: var(--text-secondary); font-size: 11px; line-height: 1.55; }
 .threshold strong { display: inline-block; margin-bottom: 2px; color: var(--text); font-family: var(--font-panel); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; }
 .threshold b { color: var(--terre); font-family: var(--font-data); }
+.example-notice { margin: -6px 0 0; padding: 6px 10px; border-left: 3px solid var(--border-strong, var(--border)); border-radius: 2px; background: var(--terre-soft); color: var(--text-secondary); font-size: 10px; line-height: 1.5; }
 .base-extinction { display: flex; gap: 8px; align-items: flex-start; margin: 18px 0 0; padding: 10px 12px; border-left: 3px solid var(--warning); border-radius: 2px; background: rgba(138, 90, 18, 0.09); color: var(--warning); font-size: 11px; line-height: 1.5; }
 .base-extinction span { font-size: 13px; line-height: 1.25; }
 .disclaimer { margin: 18px 0 0; color: var(--text-muted); font-size: 9px; line-height: 1.55; }

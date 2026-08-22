@@ -131,13 +131,14 @@ export type SimulationResult = EnergyDistribution & {
   warnings: SimulationWarning[];
 };
 
+// Le mode « projected » reste un paramètre du moteur de calcul, exercé par les
+// tests ; l'application ne simule que des factures connues et ne l'enregistre
+// donc pas.
 export type SimulatorState = {
   version: number;
   tariffs: Tariff[];
   power: number;
   annualKwh: number;
-  energyMode: EnergyMode;
-  projectedBackgroundKwh: number;
   knownHeatingKwh: number;
   residents: number;
   backgroundHcShare: number;
@@ -165,6 +166,7 @@ export type SavedProfile = {
 
 export type ProfilesStore = {
   version: number;
+  stateVersion: number;
   profiles: SavedProfile[];
   activeProfileId: string | null;
 };

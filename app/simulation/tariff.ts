@@ -25,3 +25,29 @@ export function baseOptionNotice(power: number): string | null {
   }
   return `À ${power} kVA, l’option Base est en extinction et disparaît le ${availability.on}. Elle n’est plus souscriptible et ne pourra pas être conservée au-delà.`;
 }
+
+export const TARIFF_GRID_REFERENCE_ISO = "2026-08-01";
+export const TARIFF_GRID_LABEL = "1er août 2026";
+// Les tarifs réglementés sont révisés au 1er février et au 1er août. Une grille
+// est donc normalement remplacée au bout de six mois ; on laisse un mois de
+// battement avant de la signaler comme dépassée.
+const STALE_AFTER_MONTHS = 7;
+
+export type TariffGridFreshness = { status: "current" | "stale"; months: number };
+
+export function tariffGridAgeMonths(now: Date, referenceIso: string = TARIFF_GRID_REFERENCE_ISO) {
+  const [year, month, day] = referenceIso.split("-").map(Number);
+  const months = (now.getFullYear() - year) * 12 + (now.getMonth() - (month - 1));
+  return Math.max(0, now.getDate() < day ? months - 1 : months);
+}
+
+export function tariffGridFreshness(now: Date, referenceIso: string = TARIFF_GRID_REFERENCE_ISO): TariffGridFreshness {
+  const months = tariffGridAgeMonths(now, referenceIso);
+  return { status: months >= STALE_AFTER_MONTHS ? "stale" : "current", months };
+}
+
+export function tariffGridNotice(now: Date, referenceIso: string = TARIFF_GRID_REFERENCE_ISO): string | null {
+  const { status, months } = tariffGridFreshness(now, referenceIso);
+  if (status === "current") return null;
+  return `La grille de référence date du ${TARIFF_GRID_LABEL}, il y a ${months} mois. Les tarifs réglementés sont révisés au 1er février et au 1er août : comparez les prix à votre facture avant de décider.`;
+}

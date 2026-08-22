@@ -22,7 +22,7 @@ Source : https://data.ademe.fr/datasets/elecdom-donnees-de-consommation-annuelle
 
 Les appareils sont additionnés au grain logement-année, appariés à la mesure « Général », puis moyennés par logement. La courbe est ajustée en log-log. Les observations où un poste dépasse le total du logement sont exclues. Les intervalles à 95 % reposent sur 3 000 rééchantillonnages bootstrap.
 
-L’exposant utilisé dans la PWA est aussi calculé contre le reste du foyer (`Général - appareil`) afin de limiter la corrélation mécanique. Pour ne pas compter deux fois l’agrandissement du foyer, cet exposant est appliqué à la consommation annuelle par habitant, puis complété par la correction démographique. Ainsi, si consommation et habitants doublent ensemble, seule la correction démographique traduit le changement de taille. Cette correction reste une hypothèse pédagogique : le fichier ouvert ne fournit pas le nombre d’habitants par logement.
+Deux exposants sont publiés à titre descriptif : celui ajusté contre la consommation du logement et celui ajusté contre le reste du foyer (`Général - appareil`), qui limite la corrélation mécanique. Aucun des deux n’est appliqué par la PWA : la valeur de référence d’un appareil n’y est pas redimensionnée par la consommation annuelle du logement. Seule la correction selon le nombre d’habitants l’est, par un exposant sous-linéaire propre à chaque usage. Elle reste une hypothèse pédagogique : le fichier ouvert ne fournit pas cette variable par logement.
 
 ## Règles de diffusion
 

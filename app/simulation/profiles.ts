@@ -8,7 +8,14 @@ import type {
 } from "./types.js";
 
 export const PROFILES_STORAGE_KEY = "hphc-profiles";
-export const PROFILES_STORE_VERSION = 6;
+export const PROFILES_STORE_VERSION = 7;
+// Version d'état écrite par chaque génération connue du magasin. À partir de la
+// version 7, le magasin l'enregistre lui-même : ce repli ne sert plus qu'aux
+// magasins plus anciens. Faute d'information, on retient la version la plus
+// récente qu'ils aient pu écrire, une migration rejouée une seconde fois étant
+// plus dommageable qu'une migration sautée.
+const STORE_STATE_VERSIONS: Record<number, number> = { 5: 10, 6: 11, 7: 12 };
+const FALLBACK_STATE_VERSION = 9;
 const DEFAULT_PROFILE_NAME = "Ma simulation";
 
 type StorageReader = Pick<Storage, "getItem">;
@@ -34,8 +41,6 @@ function deepCloneState(state: SimulatorStateInput): SimulatorStateInput {
     tariffs: state.tariffs.map((tariff) => ({ ...tariff })),
     power: state.power,
     annualKwh: state.annualKwh,
-    energyMode: state.energyMode,
-    projectedBackgroundKwh: state.projectedBackgroundKwh,
     knownHeatingKwh: state.knownHeatingKwh,
     residents: state.residents,
     backgroundHcShare: state.backgroundHcShare,
@@ -51,8 +56,6 @@ function stateInputFromState(state: SimulatorState): SimulatorStateInput {
     tariffs: state.tariffs,
     power: state.power,
     annualKwh: state.annualKwh,
-    energyMode: state.energyMode,
-    projectedBackgroundKwh: state.projectedBackgroundKwh,
     knownHeatingKwh: state.knownHeatingKwh,
     residents: state.residents,
     backgroundHcShare: state.backgroundHcShare,
@@ -75,7 +78,12 @@ function isValidProfile(value: unknown): value is SavedProfile {
 }
 
 function emptyStore(): ProfilesStore {
-  return { version: PROFILES_STORE_VERSION, profiles: [], activeProfileId: null };
+  return { version: PROFILES_STORE_VERSION, stateVersion: CURRENT_STATE_VERSION, profiles: [], activeProfileId: null };
+}
+
+function readStateVersion(parsed: Partial<ProfilesStore>, storeVersion: number) {
+  if (Number.isFinite(parsed.stateVersion)) return Number(parsed.stateVersion);
+  return STORE_STATE_VERSIONS[storeVersion] ?? FALLBACK_STATE_VERSION;
 }
 
 export function loadProfilesStore(storage: StorageReader): ProfilesStore {
@@ -89,7 +97,7 @@ export function loadProfilesStore(storage: StorageReader): ProfilesStore {
       ? parsed.activeProfileId ?? null
       : (profiles[0]?.id ?? null);
     const version = Number.isFinite(parsed.version) ? Number(parsed.version) : 1;
-    return { version, profiles, activeProfileId };
+    return { version, stateVersion: readStateVersion(parsed, version), profiles, activeProfileId };
   } catch {
     return emptyStore();
   }
@@ -109,13 +117,13 @@ export function migrateFromLegacyState(
     if (store.version >= PROFILES_STORE_VERSION) return store;
     const profiles = store.profiles.map((profile) => {
       const migrated = migrateSimulationState(
-        { ...profile.state, version: CURRENT_STATE_VERSION - 1 },
+        { ...profile.state, version: store.stateVersion },
         defaults,
         presets,
       );
       return { ...profile, state: stateInputFromState(migrated), updatedAt: new Date().toISOString() };
     });
-    const upgraded = { ...store, version: PROFILES_STORE_VERSION, profiles };
+    const upgraded = { ...store, version: PROFILES_STORE_VERSION, stateVersion: CURRENT_STATE_VERSION, profiles };
     saveProfilesStore(storage, upgraded);
     return upgraded;
   }
@@ -126,7 +134,7 @@ export function migrateFromLegacyState(
       : migrateSimulationState(defaults, defaults, presets);
     const stateInput = stateInputFromState(migrated);
     const profile = createSavedProfile(DEFAULT_PROFILE_NAME, stateInput);
-    const next: ProfilesStore = { version: PROFILES_STORE_VERSION, profiles: [profile], activeProfileId: profile.id };
+    const next: ProfilesStore = { version: PROFILES_STORE_VERSION, stateVersion: CURRENT_STATE_VERSION, profiles: [profile], activeProfileId: profile.id };
     saveProfilesStore(storage, next);
     if (legacyRaw) storage.removeItem(STATE_STORAGE_KEY);
     return next;

@@ -10,7 +10,7 @@ import {
 } from "../.test-dist/calculate.js";
 import { APPLIANCE_PRESETS, DEFAULT_APPLIANCES } from "../.test-dist/presets.js";
 import { ELECDOM_DATA_QUALITY, getApplianceCalibration } from "../.test-dist/calibration.js";
-import { estimateCoolingHcShare, estimateCoolingProfile } from "../.test-dist/cooling.js";
+import { coolingDwellingFactor, estimateCoolingHcShare, estimateCoolingProfile } from "../.test-dist/cooling.js";
 import {
   estimateHeating,
   isValidOffPeakWindow,
@@ -18,9 +18,10 @@ import {
   updateOffPeakWindowTime,
 } from "../.test-dist/heating.js";
 import { rescaleAppliancesToResidentExponent, residentExponent, scaleAppliancesForResidents } from "../.test-dist/occupants.js";
-import { baseOptionAvailability, baseOptionNotice } from "../.test-dist/tariff-availability.js";
+import { baseOptionAvailability, baseOptionNotice, tariffGridFreshness, tariffGridNotice } from "../.test-dist/tariff.js";
 import {
   CURRENT_STATE_VERSION,
+  isDefaultSimulation,
   loadSimulationState,
   saveSimulationState,
   STATE_STORAGE_KEY,
@@ -33,6 +34,7 @@ import {
   loadProfilesStore,
   migrateFromLegacyState,
   parseProfileJson,
+  PROFILES_STORAGE_KEY,
   PROFILES_STORE_VERSION,
   removeProfile,
   renameProfile,
@@ -56,8 +58,6 @@ const defaultState = {
   tariffs: [tariff],
   power: 6,
   annualKwh: 4500,
-  energyMode: "known-total",
-  projectedBackgroundKwh: 2987,
   knownHeatingKwh: 0,
   residents: 2,
   backgroundHcShare: 25,
@@ -130,13 +130,15 @@ test("ne place en HC que le chauffage ayant naturellement lieu dans la plage", (
   const mixed = estimateHeating({ ...base, occupancy: "mixed" }, window);
   const home = estimateHeating({ ...base, occupancy: "home" }, window);
 
-  closeTo(away.hcShare, 39.7754, 0.01);
-  closeTo(mixed.hcShare, 38.7225, 0.01);
+  closeTo(away.hcShare, 41.1748, 0.01);
+  closeTo(mixed.hcShare, 39.5068, 0.01);
   closeTo(home.hcShare, 37.2437, 0.01);
   assert.ok(away.hcShare > mixed.hcShare && mixed.hcShare > home.hcShare);
   // La correction porte sur la répartition, pas sur l'ampleur déjà calibrée.
-  closeTo(away.annualKwh, 3831.81, 0.01);
-  closeTo(home.annualKwh, 4092.28, 0.01);
+  closeTo(away.annualKwh, 3776.55, 0.01);
+  closeTo(home.annualKwh, 4175.17, 0.01);
+  // Un réduit d'absence plus profond que le réduit de nuit écarte les profils.
+  assert.ok(home.annualKwh / away.annualKwh > 1.1);
 
   // Les nuits sont les heures les plus froides : leur besoin pèse davantage que
   // leur seule durée dans la journée, sans quoi le modèle défavorise les HC.
@@ -464,8 +466,8 @@ test("migre une sauvegarde plus ancienne et répare ses plages invalides", () =>
   assert.equal(migrated.backgroundHcShare, 100);
   const preset = APPLIANCE_PRESETS.find((candidate) => candidate.type === "water-heater");
   closeTo(migrated.appliances[0].annualKwh, preset.annualKwh);
-  assert.equal(migrated.energyMode, "known-total");
-  closeTo(migrated.projectedBackgroundKwh, 7200 - preset.annualKwh);
+  assert.equal(migrated.energyMode, undefined, "le mode d'énergie n'est plus un champ persisté");
+  assert.equal(migrated.projectedBackgroundKwh, undefined);
   assert.equal(migrated.appliances[0].calculationMode, "reference");
   assert.deepEqual(migrated.offPeakWindows, defaultState.offPeakWindows);
   assert.equal(migrated.activeOffPeakWindowId, 1);
@@ -682,6 +684,107 @@ test("signale l'extinction de l'option Base au-delà de 6 kVA", () => {
   assert.match(baseOptionNotice(24), /1er février 2027/);
 });
 
+test("signale une grille de référence dépassée par une révision tarifaire", () => {
+  const at = (iso) => tariffGridFreshness(new Date(`${iso}T12:00:00`));
+  // Les tarifs réglementés sont révisés au 1er février et au 1er août.
+  assert.deepEqual(at("2026-08-22"), { status: "current", months: 0 });
+  assert.deepEqual(at("2027-01-15"), { status: "current", months: 5 });
+  assert.equal(at("2027-03-01").status, "stale");
+  assert.equal(at("2027-03-01").months, 7);
+
+  assert.equal(tariffGridNotice(new Date("2026-12-01T12:00:00")), null);
+  assert.match(tariffGridNotice(new Date("2027-03-01T12:00:00")), /1er août 2026/);
+  assert.match(tariffGridNotice(new Date("2027-03-01T12:00:00")), /7 mois/);
+});
+
+test("dimensionne la climatisation sur le logement comme le chauffage", () => {
+  const window = { id: 1, start: "21:40", end: "05:40" };
+  closeTo(coolingDwellingFactor({ surfaceM2: 80, insulation: "standard" }), 1);
+  // La référence du profil mixte doit rester neutre, la calibration du
+  // préréglage étant exprimée pour ce logement.
+  closeTo(estimateCoolingProfile("mixed", window).demandFactor, 1);
+
+  const small = coolingDwellingFactor({ surfaceM2: 40, insulation: "standard" });
+  const large = coolingDwellingFactor({ surfaceM2: 160, insulation: "standard" });
+  assert.ok(small < 1 && large > 1);
+  // Sous-linéaire : la climatisation n'équipe qu'une partie des pièces.
+  assert.ok(large < 2);
+
+  const good = coolingDwellingFactor({ surfaceM2: 100, insulation: "good" });
+  const poor = coolingDwellingFactor({ surfaceM2: 100, insulation: "poor" });
+  assert.ok(good < poor);
+  // La présence et le logement se combinent sans se remplacer.
+  const dwelling = { surfaceM2: 160, insulation: "poor" };
+  closeTo(
+    estimateCoolingProfile("home", window, dwelling).demandFactor,
+    estimateCoolingProfile("home", window).demandFactor * coolingDwellingFactor(dwelling),
+  );
+  closeTo(estimateCoolingProfile("home", window, dwelling).hcShare, estimateCoolingProfile("home", window).hcShare);
+});
+
+test("distingue le résultat d'exemple d'une simulation renseignée", () => {
+  const example = { ...defaultStateInput };
+  assert.equal(isDefaultSimulation(example, defaultState), true);
+  assert.equal(isDefaultSimulation({ ...example, annualKwh: 5200 }, defaultState), false);
+  assert.equal(isDefaultSimulation({ ...example, residents: 4 }, defaultState), false);
+  assert.equal(isDefaultSimulation({ ...example, heating: { ...example.heating, enabled: true } }, defaultState), false);
+  assert.equal(isDefaultSimulation({ ...example, appliances: example.appliances.slice(1) }, defaultState), false);
+  // La plage tarifaire retenue ne rend pas la simulation personnelle.
+  assert.equal(isDefaultSimulation({ ...example, activeOffPeakWindowId: 4 }, defaultState), true);
+});
+
+test("n'attribue pas à ElecDom une valeur de repli interne", () => {
+  const pool = APPLIANCE_PRESETS.find((preset) => preset.type === "pool-pump");
+  const vehicle = APPLIANCE_PRESETS.find((preset) => preset.type === "electric-vehicle");
+  const waterHeater = APPLIANCE_PRESETS.find((preset) => preset.type === "water-heater");
+
+  for (const preset of [pool, vehicle]) {
+    assert.equal(preset.source.kind, "internal");
+    assert.equal(preset.source.organization, "Déclic HC");
+    assert.equal(preset.source.year, undefined, "une valeur interne ne porte pas l'année d'ElecDom");
+    assert.equal(preset.source.url, undefined, "ni son lien");
+  }
+  // L'échantillon insuffisant est nommé comme la raison du repli.
+  assert.match(pool.source.label, /11 logements/);
+  assert.match(pool.source.label, /220 kWh\/an/);
+  assert.match(vehicle.source.label, /aucune observation/i);
+
+  assert.equal(waterHeater.source.year, 2022);
+  assert.ok(waterHeater.source.url);
+  assert.match(waterHeater.source.organization, /ElecDom/);
+});
+
+test("migre les profils depuis la version d'état que le magasin a réellement écrite", () => {
+  const residents = 5;
+  const ratio = residents / 2;
+  const linear = appliances.map((appliance) => ({
+    ...appliance,
+    annualKwh: appliance.annualKwh * ratio,
+    lowKwh: appliance.lowKwh * ratio,
+    highKwh: appliance.highKwh * ratio,
+  }));
+  const profile = createSavedProfile("Ancien", { ...defaultStateInput, residents, appliances: linear });
+  // Un magasin de version 5 n'enregistrait pas la version d'état : elle est
+  // déduite de la table, et vaut 10.
+  const stored = { version: 5, profiles: [profile], activeProfileId: profile.id };
+  const loaded = loadProfilesStore({ getItem: () => JSON.stringify(stored) });
+  assert.equal(loaded.stateVersion, 10);
+
+  const saved = {};
+  const store = migrateFromLegacyState(
+    { getItem: () => JSON.stringify(stored), setItem: (key, value) => { saved[key] = value; }, removeItem: () => {} },
+    defaultState,
+    APPLIANCE_PRESETS,
+  );
+  assert.equal(store.version, PROFILES_STORE_VERSION);
+  assert.equal(store.stateVersion, CURRENT_STATE_VERSION);
+  store.profiles[0].state.appliances.forEach((appliance, index) => {
+    closeTo(appliance.annualKwh, appliances[index].annualKwh * ratio ** residentExponent(appliance.type));
+  });
+  // La version d'état écrite est relue telle quelle, sans repli sur la table.
+  assert.equal(loadProfilesStore({ getItem: () => saved[PROFILES_STORAGE_KEY] }).stateVersion, CURRENT_STATE_VERSION);
+});
+
 test("utilise le même numéro de version dans la PWA, le cache et le paquet", async () => {
   const [versionSource, pageSource, cssSource, manifestSource, serviceWorkerSource, packageSource, lockSource] = await Promise.all([
     readFile(new URL("../app/version.ts", import.meta.url), "utf8"),
@@ -694,7 +797,7 @@ test("utilise le même numéro de version dans la PWA, le cache et le paquet", a
   ]);
   const version = versionSource.match(/APP_VERSION = "([^"]+)"/)?.[1];
 
-  assert.equal(version, "0.12.0");
+  assert.equal(version, "0.13.0");
   assert.match(pageSource, /function ThumbOnlyRange/);
   assert.match(pageSource, /Math\.abs\(event\.clientX - center\) > hitRadius/);
   assert.match(pageSource, /event\.preventDefault\(\)/);

@@ -7,7 +7,6 @@ import type {
   AppliancePreset,
   ApplianceSource,
   CalculationMode,
-  EnergyMode,
   HeatingSettings,
   LegacyAppliance,
   LegacySimulatorState,
@@ -18,7 +17,7 @@ import type {
 } from "./types.js";
 
 export const STATE_STORAGE_KEY = "hphc-simulator-state";
-export const CURRENT_STATE_VERSION = 11;
+export const CURRENT_STATE_VERSION = 12;
 
 type StorageReader = Pick<Storage, "getItem">;
 type StorageWriter = Pick<Storage, "setItem">;
@@ -26,7 +25,6 @@ type StorageWriter = Pick<Storage, "setItem">;
 const isFiniteNonNegative = (value: unknown): value is number => Number.isFinite(value) && Number(value) >= 0;
 const validTime = (value: unknown): value is string => typeof value === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 const validCalculationMode = (value: unknown): value is CalculationMode => value === "reference" || value === "detailed" || value === "measured";
-const validEnergyMode = (value: unknown): value is EnergyMode => value === "known-total" || value === "projected";
 const validSourceKind = (value: unknown): value is SourceKind => value === "internal" || value === "official" || value === "user";
 
 function cloneSource(source: ApplianceSource) {
@@ -210,18 +208,11 @@ export function migrateSimulationState(
   const knownHeatingKwh = isFiniteNonNegative(state.knownHeatingKwh)
     ? state.knownHeatingKwh
     : heating.enabled ? Math.min(estimatedHeatingKwh, Math.max(0, annualKwh - appliances.reduce((sum, appliance) => sum + appliance.annualKwh, 0))) : 0;
-  const energyMode = validEnergyMode(state.energyMode) ? state.energyMode : "known-total";
-  const defaultProjectedBackground = Math.max(0, annualKwh - appliances.reduce((sum, appliance) => sum + appliance.annualKwh, 0));
-
   return {
     version: CURRENT_STATE_VERSION,
     tariffs,
     power,
     annualKwh,
-    energyMode,
-    projectedBackgroundKwh: isFiniteNonNegative(state.projectedBackgroundKwh)
-      ? state.projectedBackgroundKwh
-      : defaultProjectedBackground,
     knownHeatingKwh,
     residents,
     backgroundHcShare: Number.isFinite(state.backgroundHcShare)
@@ -232,6 +223,25 @@ export function migrateSimulationState(
     offPeakWindows,
     activeOffPeakWindowId,
   };
+}
+
+// Les champs sur lesquels un foyer agit réellement. Tant qu'ils valent tous
+// leur valeur par défaut, le résultat affiché n'est qu'une démonstration.
+function simulationFingerprint(state: Omit<SimulatorState, "version">) {
+  return JSON.stringify({
+    tariffs: state.tariffs,
+    power: state.power,
+    annualKwh: state.annualKwh,
+    knownHeatingKwh: state.knownHeatingKwh,
+    residents: state.residents,
+    backgroundHcShare: state.backgroundHcShare,
+    heating: state.heating,
+    appliances: state.appliances.map((appliance) => [appliance.type, Math.round(appliance.annualKwh)]),
+  });
+}
+
+export function isDefaultSimulation(state: Omit<SimulatorState, "version">, defaults: SimulatorState) {
+  return simulationFingerprint(state) === simulationFingerprint(defaults);
 }
 
 export function loadSimulationState(

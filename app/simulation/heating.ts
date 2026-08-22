@@ -10,9 +10,13 @@ const ALTITUDE_FACTOR = { low: 1, medium: 1.22, high: 1.48 } as const;
 // H3, où la température extérieure de la saison de chauffe reste douce.
 export const HEAT_PUMP_SCOP = 3.6;
 
-// Profil standardisé : 19 °C en confort, 17 °C la nuit et pendant les absences.
+// Profil standardisé : 19 °C en confort, 17 °C la nuit et 16 °C pendant les
+// absences de journée. Le réduit de nuit reste modéré, la remise en confort du
+// matin devant rester courte ; une absence de journée autorise un réduit plus
+// profond, ce que fait tout programmateur d'ambiance.
 const COMFORT_SETPOINT_C = 19;
-const ECO_SETPOINT_C = 17;
+const NIGHT_SETBACK_C = 17;
+const ABSENCE_SETBACK_C = 16;
 // Journée type de la saison de chauffe, en °C : sinusoïde de moyenne dépendante
 // de l'altitude, minimale à 5 h et maximale à 17 h. Le besoin instantané est
 // proportionnel à l'écart entre la consigne et cette température extérieure, ce
@@ -51,13 +55,14 @@ export const isMinuteOffPeak = (minute: number, window: OffPeakWindow) => {
   return start < end ? minute >= start && minute < end : minute >= start || minute < end;
 };
 
-const isComfortPeriod = (profile: OccupancyProfile, weekday: number, minute: number) => {
+const setpointAt = (profile: OccupancyProfile, weekday: number, minute: number) => {
   const daytime = minute >= 6 * 60 && minute < 23 * 60;
-  if (!daytime) return false;
+  if (!daytime) return NIGHT_SETBACK_C;
   const weekend = weekday >= 5;
-  if (weekend || profile === "home") return true;
-  if (profile === "mixed" && weekday < 2) return true;
-  return (minute >= 6 * 60 && minute < 8 * 60) || (minute >= 17 * 60 && minute < 23 * 60);
+  if (weekend || profile === "home") return COMFORT_SETPOINT_C;
+  if (profile === "mixed" && weekday < 2) return COMFORT_SETPOINT_C;
+  const present = (minute >= 6 * 60 && minute < 8 * 60) || (minute >= 17 * 60 && minute < 23 * 60);
+  return present ? COMFORT_SETPOINT_C : ABSENCE_SETBACK_C;
 };
 
 export const outdoorTemperature = (minute: number, altitude: AltitudeBand) => (
@@ -69,8 +74,7 @@ function computeHeatingDemand(profile: OccupancyProfile, window: OffPeakWindow, 
   let offPeak = 0;
   for (let weekday = 0; weekday < 7; weekday += 1) {
     for (let minute = 0; minute < 1440; minute += 10) {
-      const setpoint = isComfortPeriod(profile, weekday, minute) ? COMFORT_SETPOINT_C : ECO_SETPOINT_C;
-      const demand = Math.max(0, setpoint - outdoorTemperature(minute, altitude));
+      const demand = Math.max(0, setpointAt(profile, weekday, minute) - outdoorTemperature(minute, altitude));
       total += demand;
       // Sans équipement d'accumulation déclaré, le chauffage n'est compté en HC
       // que lorsqu'il fonctionne naturellement pendant la plage tarifaire.

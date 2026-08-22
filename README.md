@@ -2,7 +2,7 @@
 
 PWA pédagogique pour comparer le Tarif Bleu Base et l’option Heures Pleines / Heures Creuses d’EDF Corse selon la consommation et les usages opportunistes d’un foyer.
 
-La grille par défaut reprend le Tarif Bleu résidentiel TTC EDF Corse au 1er août 2026. En Corse l’abonnement annuel est identique dans les deux options : le point d’équilibre ne dépend donc que du prix du kWh, pas de la consommation. Au-delà de 6 kVA, l’option Base est en extinction et l’interface le signale.
+La grille par défaut reprend le Tarif Bleu résidentiel TTC EDF Corse au 1er août 2026. En Corse l’abonnement annuel est identique dans les deux options : le point d’équilibre ne dépend donc que du prix du kWh, pas de la consommation. Au-delà de 6 kVA, l’option Base est en extinction et l’interface le signale, comme elle signale une grille de référence dépassée par une révision tarifaire.
 
 ## Développement
 

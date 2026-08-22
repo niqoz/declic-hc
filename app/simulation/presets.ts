@@ -7,16 +7,20 @@ export const INTERNAL_ESTIMATE_SOURCE: ApplianceSource = {
   label: "Estimation pédagogique modifiable — calibration insuffisante",
 };
 
+// Une valeur non calibrée est une estimation interne : elle ne porte donc ni
+// l'année ni le lien du jeu ElecDom, qui laisseraient croire qu'elle en vient.
+// L'échantillon insuffisant est nommé comme la raison du repli, pas comme la
+// source de la valeur.
 const source = (type: string): ApplianceSource => {
   const calibration = getApplianceCalibration(type);
   if (!calibration || calibration.confidence === "insufficient") {
+    if (!calibration) return { ...INTERNAL_ESTIMATE_SOURCE };
+    const plural = calibration.sampleSize > 1 ? "s" : "";
     return {
       ...INTERNAL_ESTIMATE_SOURCE,
-      ...(calibration ? {
-        label: `Estimation indicative — seulement ${calibration.sampleSize} logement${calibration.sampleSize > 1 ? "s" : ""} exploitable${calibration.sampleSize > 1 ? "s" : ""}`,
-        year: 2022,
-        url: calibration.sourceUrl,
-      } : {}),
+      label: calibration.sampleSize > 0
+        ? `Estimation interne — ElecDom ne retient que ${calibration.sampleSize} logement${plural} (${Math.round(calibration.referenceAnnualKwh)} kWh/an), échantillon insuffisant`
+        : "Estimation interne — aucune observation exploitable dans ElecDom",
     };
   }
   return {

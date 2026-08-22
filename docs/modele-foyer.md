@@ -1,6 +1,6 @@
 # Modèle de foyer de Déclic HC
 
-Date de référence de cette méthode : 22 août 2026 (version 0.12.0).
+Date de référence de cette méthode : 22 août 2026 (version 0.13.0).
 
 ## Facture connue
 
@@ -8,13 +8,21 @@ Le simulateur conserve la consommation annuelle connue. Les appareils et une qua
 
 Les appareils ne sont jamais réduits. Si le chauffage dépasse le solde disponible, lui seul est plafonné avec un avertissement. Si les appareils dépassent déjà le total saisi, le total calculé est relevé afin de préserver le bilan énergétique.
 
+## Reste du foyer et état par défaut
+
+Ce qui n'est ni listé comme usage ni déclaré comme chauffage forme le « reste du foyer » : talon permanent, cuisson, éclairage, multimédia. Sa part en heures creuses est réglable et vaut 25 % par défaut. Une plage de huit heures couvre le tiers de la journée, et le seul talon permanent — froid, box, veilles — s'y répartirait mécaniquement à 33 % ; la valeur retenue est volontairement plus basse, une partie de ces usages suivant la vie du foyer plutôt que l'horloge. C'est une convention pédagogique interne, adoptée le 22 août 2026, que le curseur de répartition permet de corriger.
+
+L'application s'ouvre sur un foyer d'exemple : 4 500 kWh/an, deux habitants, 6 kVA, chauffe-eau, lave-linge et lave-vaisselle programmés en heures creuses. Cet état place d'emblée la moitié de la consommation en HC, au-dessus du point d'équilibre, donc sur un verdict favorable aux heures creuses. Tant qu'aucun de ces champs n'a été modifié, la carte de résultat le signale comme un résultat d'exemple, afin qu'un chiffre de démonstration ne soit pas lu comme une conclusion.
+
 ## Usages flexibles
 
 Les appareils ajoutés par le foyer représentent volontairement des usages qu’il s’engage à programmer en heures creuses. Leur consommation centrale est donc placée à 100 % en HC, sauf la climatisation estivale. Les estimations basse et haute alimentent deux scénarios complémentaires de facture ; elles ne remplacent pas le scénario central.
 
 La climatisation estivale suit un profil diurne de 12 h à 22 h. Elle fonctionne toute cette période le week-end et lorsque le foyer est présent. Pour le profil absent, elle fonctionne de 17 h à 22 h en semaine ; le profil mixte ajoute deux journées complètes de télétravail. Seul le recouvrement réel de ces périodes avec la plage tarifaire est compté en HC. Le chauffage assuré par une climatisation réversible reste représenté séparément par le système « pompe à chaleur / clim réversible » du modèle de chauffage.
 
-La valeur annuelle de climatisation est exprimée pour le profil mixte. Elle est modulée par la durée d’usage : le profil absent consomme moins, le profil présent davantage. Une valeur déclarée comme mesurée n’est pas redimensionnée.
+La valeur annuelle de climatisation est exprimée pour le profil mixte, dans un logement de 80 m² en isolation standard. Elle est modulée par la durée d’usage — le profil absent consomme moins, le profil présent davantage — puis par le logement lui-même, comme l’est le chauffage. La surface intervient à la racine carrée, la climatisation n’équipant en général qu’une partie des pièces, et l’isolation par un coefficient de 0,8 en bonne, 1 en standard et 1,25 en faible : elle limite les apports d’été moins nettement qu’elle ne limite les déperditions d’hiver. Une valeur déclarée comme mesurée n’est pas redimensionnée.
+
+La surface est une donnée du foyer et non du seul chauffage : elle dimensionne les deux postes et reste saisissable même lorsque le chauffage électrique n’est pas pris en compte.
 
 Source : convention pédagogique interne Déclic HC, confirmée pour l’objectif comportemental du simulateur le 21 août 2026. Exception estivale et profils de présence précisés le même jour, puis correction de la demande annuelle dans la version 0.9.0.
 
@@ -22,7 +30,9 @@ Source : convention pédagogique interne Déclic HC, confirmée pour l’objecti
 
 Le modèle ne propose actuellement ni radiateur à accumulation, ni ballon tampon, ni autre capacité explicite de stockage thermique. Il ne déplace donc pas artificiellement vers les HC un besoin de chauffage situé en HP. La part HC correspond uniquement au recouvrement naturel entre le profil hebdomadaire de chauffage et la plage tarifaire sélectionnée.
 
-Ce recouvrement est pondéré par le besoin thermique et non par la seule durée. Le besoin instantané est pris proportionnel à l’écart entre la consigne — 19 °C en confort, 17 °C la nuit et pendant les absences — et une température extérieure de saison de chauffe décrite par une sinusoïde journalière, minimale à 5 h et maximale à 17 h, d’amplitude 4 °C autour d’une moyenne de 10 °C en dessous de 400 m, 7 °C entre 400 et 800 m et 4 °C au-dessus. Les heures nocturnes, les plus froides, pèsent ainsi davantage que leur seule durée : la part HC du chauffage dépasse la proportion mécanique de 33 % d’une plage de huit heures, et décroît quand l’altitude réduit l’écart relatif entre le jour et la nuit. La version 0.11.0 et les précédentes appliquaient un abattement uniforme de 7/9 à toutes les heures hors confort, y compris nocturnes, ce qui sous-estimait la part HC du poste le plus lourd de la facture.
+Ce recouvrement est pondéré par le besoin thermique et non par la seule durée. Le besoin instantané est pris proportionnel à l’écart entre la consigne — 19 °C en confort, 17 °C la nuit et 16 °C pendant les absences de journée — et une température extérieure de saison de chauffe décrite par une sinusoïde journalière, minimale à 5 h et maximale à 17 h, d’amplitude 4 °C autour d’une moyenne de 10 °C en dessous de 400 m, 7 °C entre 400 et 800 m et 4 °C au-dessus. Les heures nocturnes, les plus froides, pèsent ainsi davantage que leur seule durée : la part HC du chauffage dépasse la proportion mécanique de 33 % d’une plage de huit heures, et décroît quand l’altitude réduit l’écart relatif entre le jour et la nuit. La version 0.11.0 et les précédentes appliquaient un abattement uniforme de 7/9 à toutes les heures hors confort, y compris nocturnes, ce qui sous-estimait la part HC du poste le plus lourd de la facture.
+
+Le réduit de nuit reste modéré, la remise en confort du matin devant rester courte, alors qu’une absence de journée autorise un abaissement plus profond — ce que fait tout programmateur d’ambiance. Un foyer présent en permanence consomme ainsi environ 10 % de plus qu’un foyer absent en journée, contre 7 % lorsque les deux réduits étaient confondus. L’écart reste modeste parce qu’il ne porte que sur 45 heures par semaine et sur 3 °C ; le modèle ignore volontairement les pénalités de relance, qui joueraient en sens inverse.
 
 L’altitude se simplifie dans le rapport qui donne le facteur de présence : elle ne pèse sur l’ampleur du besoin qu’une seule fois, par le coefficient d’altitude.
 
@@ -48,7 +58,15 @@ La grille EDF Corse du 1er août 2026 met l’option Base en extinction au-delà
 
 L’abonnement annuel est identique en Base et en HP/HC pour les neuf puissances de cette grille. Le point d’équilibre est donc indépendant de la consommation annuelle : c’est une propriété du tarif corse, non une approximation du modèle.
 
+Les tarifs réglementés sont révisés au 1er février et au 1er août. La grille embarquée porte sa date de référence, et l’interface signale qu’elle est dépassée passé sept mois — six mois de validité normale et un mois de battement. Une application installée hors ligne ne peut pas se mettre à jour seule : mieux vaut qu’elle avoue son âge que de laisser croire à des prix courants.
+
 Source : grilles de prix du Tarif Bleu résidentiel EDF Corse, HT et TTC, applicables au 1er août 2026, relevées le 22 août 2026.
+
+## Contenu de la sauvegarde
+
+L’état enregistré ne décrit qu’une facture connue. Le moteur de calcul sait aussi additionner des postes projetés sans total de référence, mode que les tests exercent, mais l’application ne l’expose pas et ne l’enregistre donc plus depuis la version 0.13.0.
+
+Le magasin de profils enregistre la version d’état qu’il a écrite. Les migrations d’un profil partent ainsi de sa version réelle, et non d’une version supposée : une correction déjà appliquée n’est pas rejouée, une correction manquante n’est pas sautée. Les magasins antérieurs à cette règle sont rattachés à leur version d’état connue par une table explicite.
 
 ## Point d’équilibre
 

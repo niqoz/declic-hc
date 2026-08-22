@@ -28,8 +28,8 @@ import {
   setActiveProfile,
   upsertProfile,
 } from "./simulation/profiles";
-import { CURRENT_STATE_VERSION, migrateSimulationState } from "./simulation/storage";
-import { baseOptionNotice } from "./simulation/tariff-availability";
+import { CURRENT_STATE_VERSION, isDefaultSimulation, migrateSimulationState } from "./simulation/storage";
+import { baseOptionNotice, tariffGridNotice, TARIFF_GRID_LABEL } from "./simulation/tariff";
 import type {
   Appliance,
   AppliancePreset,
@@ -101,8 +101,6 @@ const DEFAULT_SIMULATOR_STATE: SimulatorState = {
   tariffs: DEFAULT_TARIFFS,
   power: 6,
   annualKwh: HOUSEHOLD_REFERENCE_KWH,
-  energyMode: "known-total",
-  projectedBackgroundKwh: HOUSEHOLD_REFERENCE_KWH - DEFAULT_APPLIANCES.reduce((sum, appliance) => sum + appliance.annualKwh, 0),
   knownHeatingKwh: 0,
   residents: REFERENCE_RESIDENTS,
   backgroundHcShare: 25,
@@ -124,8 +122,6 @@ const toStateInput = (state: SimulatorState): SimulatorStateInput => ({
   tariffs: state.tariffs,
   power: state.power,
   annualKwh: state.annualKwh,
-  energyMode: "known-total",
-  projectedBackgroundKwh: 0,
   knownHeatingKwh: state.knownHeatingKwh,
   residents: state.residents,
   backgroundHcShare: state.backgroundHcShare,
@@ -155,7 +151,7 @@ export default function Home() {
   const [activeOffPeakWindowId, setActiveOffPeakWindowId] = useState(DEFAULT_HC_WINDOWS[0].id);
   const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false);
   const [storageReady, setStorageReady] = useState(false);
-  const [profilesStore, setProfilesStore] = useState<ProfilesStore>({ version: PROFILES_STORE_VERSION, profiles: [], activeProfileId: null });
+  const [profilesStore, setProfilesStore] = useState<ProfilesStore>({ version: PROFILES_STORE_VERSION, stateVersion: CURRENT_STATE_VERSION, profiles: [], activeProfileId: null });
   const activeProfileId = profilesStore.activeProfileId;
   const importProfileInputRef = useRef<HTMLInputElement>(null);
 
@@ -210,7 +206,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!storageReady || !activeProfileId) return;
-    const stateInput: SimulatorStateInput = toStateInput({ version: CURRENT_STATE_VERSION, tariffs, power, annualKwh, energyMode: "known-total", projectedBackgroundKwh: 0, knownHeatingKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId });
+    const stateInput: SimulatorStateInput = toStateInput({ version: CURRENT_STATE_VERSION, tariffs, power, annualKwh, knownHeatingKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId });
     // Mise à jour du profil actif sans redéclencher l'effet sur le nouvel objet magasin.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setProfilesStore((current) => {
@@ -230,8 +226,8 @@ export default function Home() {
   const activeOffPeakWindow = offPeakWindows.find((window) => window.id === activeOffPeakWindowId) ?? offPeakWindows[0];
   const heatingEstimate = useMemo(() => estimateHeating(heating, activeOffPeakWindow), [activeOffPeakWindow, heating]);
   const coolingProfile = useMemo(
-    () => estimateCoolingProfile(heating.occupancy, activeOffPeakWindow),
-    [activeOffPeakWindow, heating.occupancy],
+    () => estimateCoolingProfile(heating.occupancy, activeOffPeakWindow, { surfaceM2: heating.surfaceM2, insulation: heating.insulation }),
+    [activeOffPeakWindow, heating.insulation, heating.occupancy, heating.surfaceM2],
   );
   const modeledAppliances = useMemo(
     () => appliances.map((appliance) => appliance.type === "air-conditioning"
@@ -250,7 +246,7 @@ export default function Home() {
     highKwh: heating.enabled ? knownHeatingKwh : 0,
   }), [heating.enabled, heatingEstimate, knownHeatingKwh]);
   const results = useMemo(
-    () => calculateSimulation({ annualKwh, energyMode: "known-total", backgroundHcShare, tariff: activeTariff, appliances: modeledAppliances, heating: retainedHeating }),
+    () => calculateSimulation({ annualKwh, backgroundHcShare, tariff: activeTariff, appliances: modeledAppliances, heating: retainedHeating }),
     [activeTariff, annualKwh, backgroundHcShare, modeledAppliances, retainedHeating],
   );
 
@@ -415,7 +411,7 @@ export default function Home() {
   function handleCreateProfile() {
     const name = prompt("Nom de la nouvelle simulation :");
     if (!name?.trim()) return;
-    const stateInput: SimulatorStateInput = toStateInput({ version: CURRENT_STATE_VERSION, tariffs, power, annualKwh, energyMode: "known-total", projectedBackgroundKwh: 0, knownHeatingKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId });
+    const stateInput: SimulatorStateInput = toStateInput({ version: CURRENT_STATE_VERSION, tariffs, power, annualKwh, knownHeatingKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId });
     const { store: updated } = addProfile(profilesStore, name.trim(), stateInput);
     setProfilesStore(updated);
     saveProfilesStore(localStorage, updated);
@@ -435,7 +431,7 @@ export default function Home() {
   function handleExportProfile() {
     const profile = getActiveProfile(profilesStore);
     if (!profile) return;
-    const currentState: SimulatorStateInput = toStateInput({ version: CURRENT_STATE_VERSION, tariffs, power, annualKwh, energyMode: "known-total", projectedBackgroundKwh: 0, knownHeatingKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId });
+    const currentState: SimulatorStateInput = toStateInput({ version: CURRENT_STATE_VERSION, tariffs, power, annualKwh, knownHeatingKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId });
     const withLatest: typeof profile = { ...profile, state: currentState, updatedAt: new Date().toISOString() };
     downloadProfileJson(withLatest, APP_VERSION);
   }
@@ -495,6 +491,11 @@ export default function Home() {
   }
 
   const baseNotice = baseOptionNotice(power);
+  const gridNotice = tariffGridNotice(new Date());
+  const isExample = storageReady && isDefaultSimulation(
+    { tariffs, power, annualKwh, knownHeatingKwh, residents, backgroundHcShare, appliances, heating, offPeakWindows, activeOffPeakWindowId },
+    DEFAULT_SIMULATOR_STATE,
+  );
   const verdictPositive = results.delta > 1;
   const verdictNeutral = Math.abs(results.delta) <= 1;
   const annualSliderMax = Math.max(20000, Math.ceil(annualKwh / 5000) * 5000);
@@ -534,7 +535,7 @@ export default function Home() {
           <Field label="Heures pleines" suffix="€/kWh" value={activeTariff.hpPrice} step={0.0001} onChange={(v) => updateTariff("hpPrice", v)} />
           <Field label="Heures creuses" suffix="€/kWh" value={activeTariff.hcPrice} step={0.0001} onChange={(v) => updateTariff("hcPrice", v)} />
         </div>
-        <p className="source-note">Préremplie avec le Tarif Bleu résidentiel EDF Corse TTC au 1er août 2026 : l’abonnement y est identique en Base et en HP/HC. Au-delà de 6 kVA, l’option Base est en extinction. Toutes les valeurs restent modifiables.</p>
+        <p className="source-note">Préremplie avec le Tarif Bleu résidentiel EDF Corse TTC au {TARIFF_GRID_LABEL} : l’abonnement y est identique en Base et en HP/HC. Au-delà de 6 kVA, l’option Base est en extinction. Toutes les valeurs restent modifiables.</p>
       </section>}
 
       <section className="simulator-grid">
@@ -557,7 +558,12 @@ export default function Home() {
                 <ThumbOnlyRange aria-label="Puissance du compteur" min={0} max={Math.max(0, tariffs.length - 1)} step={1} value={powerSliderIndex} onValueChange={(index) => setPower(tariffs[Math.round(index)]?.power ?? power)} />
                 <small><span>{tariffs[0]?.power ?? power} kVA</span><span>{tariffs.at(-1)?.power ?? power} kVA</span></small>
               </label>
-              <label className="household-occupancy"><span>Présence dans le logement</span><select value={heating.occupancy} onChange={(event) => updateHeating({ occupancy: event.target.value as HeatingSettings["occupancy"] })}><option value="away">Absent en journée</option><option value="mixed">Mixte · 2 jours de télétravail</option><option value="home">Télétravail / présent</option></select><small>Utilisée pour les profils de chauffage et de climatisation estivale.</small></label>
+              <label className="household-slider">
+                <span>Surface du logement <strong>{number.format(heating.surfaceM2)} m²</strong></span>
+                <ThumbOnlyRange aria-label="Surface du logement" min={10} max={250} step={5} value={heating.surfaceM2} onValueChange={(surfaceM2) => updateHeating({ surfaceM2 })} />
+                <small><span>10 m²</span><span>250 m²</span></small>
+              </label>
+              <label className="household-occupancy"><span>Présence dans le logement</span><select value={heating.occupancy} onChange={(event) => updateHeating({ occupancy: event.target.value as HeatingSettings["occupancy"] })}><option value="away">Absent en journée</option><option value="mixed">Mixte · 2 jours de télétravail</option><option value="home">Télétravail / présent</option></select><small>Utilisée pour les profils de chauffage et de climatisation estivale. La surface et l’isolation les dimensionnent tous les deux.</small></label>
             </div>
             <section className={`heating-card ${heating.enabled ? "enabled" : ""}`}>
               <div className="heating-heading">
@@ -565,11 +571,6 @@ export default function Home() {
                 <button type="button" aria-pressed={heating.enabled} onClick={() => updateHeating({ enabled: !heating.enabled })}>{heating.enabled ? "✓ Pris en compte" : "＋ Ajouter"}</button>
               </div>
               {heating.enabled && <>
-                <label className="heating-surface">
-                  <span>Surface chauffée <strong>{number.format(heating.surfaceM2)} m²</strong></span>
-                  <ThumbOnlyRange aria-label="Surface chauffée" min={10} max={250} step={5} value={heating.surfaceM2} onValueChange={(surfaceM2) => updateHeating({ surfaceM2 })} />
-                  <small><span>10 m²</span><span>250 m²</span></small>
-                </label>
                 <div className="heating-fields">
                   <label>Système<select value={heating.system} onChange={(event) => updateHeating({ system: event.target.value as HeatingSettings["system"] })}><option value="radiators">Radiateurs électriques</option><option value="heat-pump">Pompe à chaleur / clim réversible</option></select></label>
                   <label>Logement<select value={heating.dwellingType} onChange={(event) => updateHeating({ dwellingType: event.target.value as HeatingSettings["dwellingType"] })}><option value="apartment">Appartement</option><option value="house">Maison</option></select></label>
@@ -585,7 +586,7 @@ export default function Home() {
                   <ThumbOnlyRange aria-label="Consommation annuelle de chauffage dans la facture" min={0} max={Math.max(annualKwh, 1000)} step={100} value={Math.min(knownHeatingKwh, Math.max(annualKwh, 1000))} onValueChange={setKnownHeatingKwh} />
                   <small><span>0 kWh</span><button type="button" className="button subtle" onClick={() => setKnownHeatingKwh(Math.min(heatingEstimate.annualKwh, Math.max(0, annualKwh - results.applianceKwh)))}>Utiliser l’estimation</button><span>{number.format(Math.max(annualKwh, 1000))} kWh</span></small>
                 </label>
-                <p className="heating-note">La quantité retenue est incluse dans le total annuel connu et remplace une partie du « reste du foyer ». Elle est répartie entre HP et HC selon le profil standardisé : 19 °C en confort, 17 °C la nuit et pendant les absences. Sans stockage thermique, seuls les besoins ayant naturellement lieu pendant la plage HC sont comptés en heures creuses. Estimation pédagogique H3 à affiner avec les <a href="https://www.data.corsica/explore/dataset/dpe-logements-existants-en-corse-depuis-juillet-2021/" target="_blank" rel="noreferrer">DPE corses</a>.</p>
+                <p className="heating-note">La quantité retenue est incluse dans le total annuel connu et remplace une partie du « reste du foyer ». Elle est répartie entre HP et HC selon le profil standardisé : 19 °C en confort, 17 °C la nuit et 16 °C pendant les absences de journée, le besoin de chaque heure étant pondéré par la température extérieure. Sans stockage thermique, seuls les besoins ayant naturellement lieu pendant la plage HC sont comptés en heures creuses. Estimation pédagogique H3 à affiner avec les <a href="https://www.data.corsica/explore/dataset/dpe-logements-existants-en-corse-depuis-juillet-2021/" target="_blank" rel="noreferrer">DPE corses</a>.</p>
               </>}
             </section>
             <label className="range-label"><span>Répartition totale en heures creuses <strong>{results.share.toFixed(0)} % · {number.format(results.hcKwh)} kWh/an</strong></span><ThumbOnlyRange aria-label="Répartition totale en heures creuses" min={results.minShare} max={results.maxShare} step={1} value={results.share} disabled={results.backgroundKwh <= 0} onValueChange={setTotalHcShare} /></label>
@@ -634,6 +635,7 @@ export default function Home() {
 
         <aside className="result-card" id="result">
           <p className="step light">VOTRE SIMULATION · {power} KVA</p>
+          {isExample && <p className="example-notice">Résultat d’exemple : ajustez votre consommation, vos habitants et vos usages pour obtenir le vôtre.</p>}
           <h2>{verdictPositive ? "Les heures creuses prennent l’avantage" : verdictNeutral ? "Les deux options sont presque à égalité" : "Le tarif Base reste devant"}</h2>
           <div className={`saving ${verdictPositive ? "positive" : "negative"}`}><span>{verdictPositive ? "ÉCONOMIE ESTIMÉE" : verdictNeutral ? "ÉCART ESTIMÉ" : "SURCOÛT HP/HC ESTIMÉ"}<em>HP/HC − BASE</em></span><div className="lcd-readout"><strong>{results.delta > 0 ? "−" : "+"}{decimal.format(Math.abs(results.delta))}</strong><em>EUR / an</em></div><p><span>soit {preciseEuros.format(Math.abs(results.delta) / 12)} par mois</span><span>{number.format(results.totalKwh)} kWh/an</span></p></div>
           <div className="cost-lines">
@@ -643,6 +645,7 @@ export default function Home() {
           </div>
           <div className="distribution"><div className="distribution-title"><span>Répartition HP / HC<small>Total connu : {number.format(results.totalKwh)} kWh · plage {formatTime(activeOffPeakWindow.start)}–{formatTime(activeOffPeakWindow.end)}</small></span><strong>{results.share.toFixed(0)} % en HC</strong></div><div className="bar"><span style={{ width: `${results.share}%` }} /></div><div className="bar-legend"><span>Heures creuses · {number.format(results.hcKwh)} kWh</span><span>Heures pleines · {number.format(results.hpKwh)} kWh</span></div><div className="energy-breakdown"><span>Total en heures creuses<strong>{number.format(results.hcKwh)} kWh</strong></span><span>Usages listés<strong>{number.format(results.applianceKwh)} kWh</strong></span><span>Reste du foyer<strong>{number.format(results.backgroundKwh)} kWh</strong></span><span>Chauffage<strong>{number.format(results.heatingKwh)} kWh</strong></span><span>Chauffage en HC<strong>{number.format(results.heatingHcKwh)} kWh</strong></span><span>Appareils en HC<strong>{number.format(results.scheduledHc)} kWh</strong></span></div></div>
           <div className="threshold"><span className="threshold-icon">◎</span><p><strong>Votre point d’équilibre</strong><br />{breakEvenText}</p></div>
+          {gridNotice && <p className="base-extinction"><span aria-hidden="true">⚠</span> {gridNotice}</p>}
           {baseNotice && <p className="base-extinction"><span aria-hidden="true">⚠</span> {baseNotice}</p>}
           <p className="disclaimer"><strong>Total inclus :</strong> abonnement, énergie et taxes déjà intégrées aux tarifs TTC EDF Corse. Non inclus : services ou remises propres au contrat, régularisations et changements de tarif au cours des 12 mois. Comparez l’estimation à une facture réelle avant toute décision contractuelle.</p>
         </aside>

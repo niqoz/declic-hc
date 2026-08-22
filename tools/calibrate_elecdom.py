@@ -309,10 +309,7 @@ def render_report(calibrations: dict, quality: dict) -> str:
         "dépasse le total du logement sont exclues. Les intervalles à 95 % reposent sur 3 000 "
         "rééchantillonnages bootstrap.",
         "",
-        "L’exposant utilisé dans la PWA est aussi calculé contre le reste du foyer "
-        "(`Général - appareil`) afin de limiter la corrélation mécanique. La correction selon le "
-        "nombre d’habitants reste une hypothèse pédagogique : le fichier ouvert ne fournit pas "
-        "cette variable par logement.",
+        "Deux exposants sont publiés à titre descriptif : celui ajusté contre la consommation du logement et celui ajusté contre le reste du foyer (`Général - appareil`), qui limite la corrélation mécanique. Aucun des deux n’est appliqué par la PWA : la valeur de référence d’un appareil n’y est pas redimensionnée par la consommation annuelle du logement. Seule la correction selon le nombre d’habitants l’est, par un exposant sous-linéaire propre à chaque usage. Elle reste une hypothèse pédagogique : le fichier ouvert ne fournit pas cette variable par logement.",
         "",
         "## Règles de diffusion",
         "",
